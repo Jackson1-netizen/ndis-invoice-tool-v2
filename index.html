@@ -133,7 +133,7 @@
 </header>
 <div id="ledgerBanner" class="ledger-banner off">
   <span id="ledgerBannerText">账本：仅此浏览器。</span>
-          <button type="button" class="ghost" id="connectDiskBtn" style="margin-left:12px;">连接 .openjarvis 账本</button>
+          <button type="button" class="ghost" id="connectDiskBtn" style="margin-left:12px;">连接本机账本</button>
 </div>
 
 <main>
@@ -148,7 +148,7 @@
       <li>要把原版的客人/session 复制过来：在原版「设置」→「导出备份 (JSON)」</li>
       <li>回到本页「设置」→「导入备份」，选刚下载的文件（只读那个文件，原版不会被改）</li>
     </ol>
-    <p class="muted" style="margin:0;">v2 的本机账本文件是 <code>invoice-data-v2.json</code>（放在 <code>C:\Users\Admin\.openjarvis</code>），和原版的 <code>invoice-data.json</code> 分开。</p>
+    <p class="muted" style="margin:0;">v2 的本机账本文件是 <code>invoice-data-v2.json</code>（放在 <code>D:\Grokbot\NDIS Invoices\ledger</code>），和原版的 <code>invoice-data.json</code> 分开。用桌面「NDIS Invoice v2 (local).bat」打开会自动连上。</p>
   </div>
   <div class="card">
     <h2 id="sessFormTitle">添加 Session</h2>
@@ -492,7 +492,7 @@
     <h2>备份</h2>
     <p class="muted">建议连接本机账本，和 Jarvis 共用。仍可导出备份。</p>
     <div style="display:flex; gap:10px; flex-wrap:wrap;">
-      <button class="ghost" type="button" id="connectDiskBtn2">连接 .openjarvis 账本</button>
+      <button class="ghost" type="button" id="connectDiskBtn2">连接本机账本</button>
       <button class="ghost" id="exportBtn">导出备份 (JSON)</button>
       <button class="ghost" id="importBtn">导入备份</button>
       <input type="file" id="importFile" accept=".json,application/json" style="display:none;">
@@ -605,8 +605,10 @@ function loadState() {
   };
 }
 let state = loadState();
-// The desktop bat's local ledger server (port 8765) serves the v1 ledger, so v2 never connects to it.
-const LEDGER_URL = null;
+// v2's own local ledger server (D:\Grokbot\NDIS Invoices, started by "NDIS Invoice v2 (local).bat") on port 8766.
+// It serves ONLY the v2 ledger (invoice-data-v2.json). v1's server on port 8765 is never contacted.
+const LEDGER_URL = 'http://127.0.0.1:8766/data-v2.json';
+const LEDGER_DIR_HINT = 'D:\\Grokbot\\NDIS Invoices\\ledger';
 const IDB_NAME = 'ndis-invoice-disk-v2';
 let httpConnected = false;
 let diskHandle = null;
@@ -658,13 +660,13 @@ function updateLedgerBanner() {
   if (!el || !tx) return;
   if (httpConnected) {
     el.className = 'ledger-banner on';
-    tx.textContent = '账本：已连本机服务 (8765)。Jarvis 改完这里会更新。';
+    tx.textContent = '账本：已连本机 v2 服务 (8766)：' + LEDGER_DIR_HINT + '\\' + LEDGER_FILE_NAME + '。';
   } else if (diskHandle) {
     el.className = 'ledger-banner on';
     tx.textContent = '账本：已连本机文件 ' + LEDGER_FILE_NAME + '（v2 专用，和原版分开）。';
   } else {
     el.className = 'ledger-banner off';
-    tx.textContent = '账本：仅此浏览器（v2）。点「连接 .openjarvis 账本」，选中 C:\\Users\\Admin\\.openjarvis 文件夹，会用 ' + LEDGER_FILE_NAME + '。';
+    tx.textContent = '账本：仅此浏览器（v2）。请用桌面「NDIS Invoice v2 (local).bat」打开，或点「连接本机账本」，选中 ' + LEDGER_DIR_HINT + ' 文件夹（' + LEDGER_FILE_NAME + '）。';
   }
 }
 
@@ -748,6 +750,13 @@ async function absorbRemote(remoteObj) {
   const localRaw = localStorage.getItem(STORAGE_KEY);
   let local = {};
   try { local = JSON.parse(localRaw) || {}; } catch (e) { local = {}; }
+  const localEmpty = !['clients', 'sessions', 'invoices'].some(k => Array.isArray(local[k]) && local[k].length);
+  if (localEmpty) {
+    // Nothing entered in this browser yet: the ledger file is the truth. Don't merge default/empty
+    // settings (e.g. blank bank details) over it and don't write anything back.
+    applyBlob(remoteObj || {});
+    return;
+  }
   const merged = mergeLedgers(remoteObj, local);
   applyBlob(merged);
   if (httpConnected) {
@@ -788,7 +797,7 @@ async function resolveOpenjarvisDir(dir) {
     await dir.getFileHandle(LEDGER_FILE_NAME);
     return dir;
   } catch (e) {
-    const names = ['.openjarvis', 'openjarvis'];
+    const names = ['ledger', '.openjarvis', 'openjarvis'];
     for (let i = 0; i < names.length; i++) {
       try {
         const sub = await dir.getDirectoryHandle(names[i]);
@@ -796,7 +805,7 @@ async function resolveOpenjarvisDir(dir) {
         return sub;
       } catch (e2) {}
     }
-    if (dir && (dir.name === '.openjarvis' || dir.name === 'openjarvis')) return dir;
+    if (dir && (dir.name === 'ledger' || dir.name === '.openjarvis' || dir.name === 'openjarvis')) return dir;
     throw e;
   }
 }
@@ -805,7 +814,7 @@ async function fileHandleFromOpenjarvisDir(dir) {
   try {
     return await dir.getFileHandle(LEDGER_FILE_NAME);
   } catch (e) {
-    if (dir && (dir.name === '.openjarvis' || dir.name === 'openjarvis')) {
+    if (dir && dir.name === 'ledger') {
       return await dir.getFileHandle(LEDGER_FILE_NAME, { create: true });
     }
     throw e;
@@ -818,7 +827,7 @@ async function pickDiskLedger() {
     return;
   }
   if (!window.showDirectoryPicker && !window.showOpenFilePicker) {
-    alert('请用 Chrome。选中文件夹 C:\\Users\\Admin\\.openjarvis');
+    alert('请用 Chrome。选中文件夹 ' + LEDGER_DIR_HINT);
     return;
   }
   try {
@@ -849,7 +858,7 @@ async function pickDiskLedger() {
         dir = await resolveOpenjarvisDir(picked);
         fileHandle = await fileHandleFromOpenjarvisDir(dir);
       } catch (e) {
-        alert('请选中文件夹 C:\\Users\\Admin\\.openjarvis\n（桌面上的 openjarvis 也可以，点一下再按「选择文件夹」。不用再点 json。）');
+        alert('请选中文件夹 ' + LEDGER_DIR_HINT + '\n（里面有 ' + LEDGER_FILE_NAME + '，点一下文件夹再按「选择文件夹」。）');
         return;
       }
       await idbPut('dir', dir);
@@ -869,7 +878,7 @@ async function pickDiskLedger() {
     renderAll();
   } catch (e) {
     if (e && e.name === 'AbortError') return;
-    alert('没连上。请选中文件夹 C:\\Users\\Admin\\.openjarvis');
+    alert('没连上。请选中文件夹 ' + LEDGER_DIR_HINT);
   }
 }
 

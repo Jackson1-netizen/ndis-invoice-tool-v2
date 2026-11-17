@@ -29,7 +29,7 @@ function check(name, cond, detail) {
 
 const EXAMPLE_LEDGER = require('./fixture-example.json');
 
-async function openApp(html, { seed = {}, url = '/index.html' } = {}) {
+async function openApp(html, { seed = {}, url = '/index.html', ledger = null } = {}) {
   const ctx = await browser.createBrowserContext();
   const page = await ctx.newPage();
   await page.setViewport({ width: 1280, height: 1000 });
@@ -41,7 +41,8 @@ async function openApp(html, { seed = {}, url = '/index.html' } = {}) {
     const u = req.url();
     if (u === ORIGIN + url) return req.respond({ status: 200, contentType: 'text/html; charset=utf-8', body: html });
     if (u.startsWith('data:') || u.startsWith('blob:')) return req.continue();
-    requests.push(u);
+    requests.push(req.method() + ' ' + u);
+    if (ledger && u === 'http://127.0.0.1:8766/data-v2.json') return ledger(req);
     return req.abort();
   });
   await page.evaluateOnNewDocument(seedObj => {
@@ -100,7 +101,7 @@ async function printPdf(page, file) {
     check('storage: STORAGE_KEY is ndis-invoice-tool-v2', r0.key === 'ndis-invoice-tool-v2', r0);
     check('storage: IndexedDB name is ndis-invoice-disk-v2', r0.idb === 'ndis-invoice-disk-v2', r0);
     check('storage: ledger file is invoice-data-v2.json', r0.file === 'invoice-data-v2.json', r0);
-    check('storage: v1 8765 ledger server disabled', r0.url === null, r0);
+    check('storage: http ledger is v2-only 127.0.0.1:8766/data-v2.json', r0.url === 'http://127.0.0.1:8766/data-v2.json', r0);
     check('storage: v2 does not load v1 localStorage data', !r0.clients.includes('V1 ONLY CLIENT') && r0.next !== 999, r0);
     // do real work in v2: add a client through the UI + save settings + idb write
     await page.evaluate(async () => {
@@ -117,10 +118,43 @@ async function printPdf(page, file) {
     check('storage: v2 writes its own key', !!r1.v2 && JSON.parse(r1.v2).clients.some(c => c.name === 'EXAMPLE Isolation'));
     check('storage: only v2 IndexedDB used', r1.dbs.includes('ndis-invoice-disk-v2') && !r1.dbs.includes('ndis-invoice-disk'), r1.dbs);
     check('storage: no request to 127.0.0.1:8765', !requests.some(u => u.includes('8765')), requests);
+    check('storage: only 8766/data-v2.json contacted for the ledger', requests.filter(u => u.includes('127.0.0.1')).every(u => u.endsWith(' http://127.0.0.1:8766/data-v2.json')), requests);
     check('storage: no page errors', !dialogs.some(d => d.startsWith('pageerror')), dialogs);
     const src = V2_HTML;
     check('storage: source has no v1 key literals',
       !/['"]ndis-invoice-tool['"]/.test(src) && !/['"]ndis-invoice-disk['"]/.test(src) && !/['"]invoice-data\.json['"]/.test(src) && !src.includes('8765/data.json'));
+    await ctx.close();
+  }
+
+  /* ---------- 1b. local v2 ledger server (8766) ---------- */
+  {
+    const file = JSON.parse(ledgerText);
+    file.settings.bankAccountName = 'EXAMPLE FROM FILE';
+    const puts = [];
+    // same CORS headers as the local server (D:\Grokbot\NDIS Invoices\app\ndis_v2_server.py)
+    const headers = { 'Access-Control-Allow-Origin': ORIGIN, 'Access-Control-Allow-Methods': 'GET, PUT, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type', 'Access-Control-Allow-Private-Network': 'true' };
+    const handler = req => {
+      if (req.method() === 'GET') return req.respond({ status: 200, headers, contentType: 'application/json', body: JSON.stringify(file) });
+      if (req.method() === 'PUT') { puts.push(JSON.parse(req.postData())); return req.respond({ status: 200, headers, contentType: 'application/json', body: '{"ok":true}' }); }
+      return req.respond({ status: 204, headers });
+    };
+    // fresh browser (empty v2 localStorage): file is taken as-is, nothing written back
+    const { ctx, page, requests } = await openApp(V2_HTML, { ledger: handler });
+    await new Promise(r => setTimeout(r, 500));
+    const r1 = await page.evaluate(() => ({ http: httpConnected, clients: state.clients.length, sessions: state.sessions.length,
+      bank: state.settings.bankAccountName, next: state.settings.nextInvoiceNumber, banner: $('ledgerBannerText').textContent }));
+    check('ledger 8766: fresh browser loads the file (clients, sessions, settings)', r1.http && r1.clients === 1 && r1.sessions === 4 &&
+      r1.bank === 'EXAMPLE FROM FILE' && r1.next === 15, r1);
+    check('ledger 8766: fresh browser does not write back on connect', puts.length === 0, puts.length);
+    check('ledger 8766: banner shows the D: ledger path', /8766/.test(r1.banner) && /NDIS Invoices/.test(r1.banner), r1.banner);
+    // a change in the app is saved to 8766 only
+    await page.evaluate(() => { $('cliName').value = 'EXAMPLE Saved'; $('cliNdis').value = '430000009'; $('cliSaveBtn').click(); });
+    await new Promise(r => setTimeout(r, 300));
+    check('ledger 8766: saving PUTs the full ledger to 8766/data-v2.json', puts.length >= 1 &&
+      puts[puts.length - 1].clients.length === 2 && puts[puts.length - 1].invoices.length === 0 &&
+      puts[puts.length - 1].settings.bankAccountName === 'EXAMPLE FROM FILE', puts.map(p => p.clients.length));
+    check('ledger 8766: never contacts 8765', !requests.some(u => u.includes('8765')), requests);
     await ctx.close();
   }
 

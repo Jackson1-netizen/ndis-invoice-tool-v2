@@ -6,7 +6,11 @@ Copied from [Jackson1-netizen/ndis-invoice-tool](https://github.com/Jackson1-net
 ## What's different from v1
 - **Separate storage.** v2 uses localStorage `ndis-invoice-tool-v2`, IndexedDB `ndis-invoice-disk-v2` and the ledger file
   `invoice-data-v2.json`. It never reads or writes the v1 key, the v1 IndexedDB, `invoice-data.json`, or the
-  local 8765 ledger server. To copy v1 data, export a backup from v1 and use 设置 → 导入备份 in v2. That only reads the file.
+  v1 local ledger server (port 8765). To copy v1 data, export a backup from v1 and use 设置 → 导入备份 in v2. That only reads the file.
+- **Local ledger (optional):** on Jackson's PC, `NDIS Invoice v2 (local).bat` starts a small v2-only server on
+  `127.0.0.1:8766` (`GET/PUT /data-v2.json`, file `D:\Grokbot\NDIS Invoices\ledger\invoice-data-v2.json`). The app connects
+  to it automatically. In a browser with no v2 data yet, the file is loaded as it is and nothing is merged into it. Port 8765 (v1) is never used.
+  The server script and the data stay on the PC; neither is in this repo.
 - **Invoice type selector** on sessions and invoices: Support work / Physiotherapy.
 - **Support work** layout and calculations are unchanged. Tests check that its invoice HTML and printed PDF are pixel-identical to v1.
 - **Physiotherapy** (NDIS Pricing Schedule 2026-27, National):
