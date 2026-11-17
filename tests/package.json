@@ -1,0 +1,2 @@
+{ "name": "ndis-invoice-tool-v2-tests", "private": true, "scripts": { "test": "node run.js" },
+  "dependencies": { "puppeteer-core": "^24.0.0", "pngjs": "^7.0.0", "pixelmatch": "^5.3.0" } }

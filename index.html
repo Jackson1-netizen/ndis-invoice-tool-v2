@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>NDIS Invoice 工具</title>
+<title>NDIS Invoice 工具 v2</title>
 <style>
   :root {
     --blue: #2563eb; --blue-dark: #1d4ed8; --bg: #f1f5f9; --card: #ffffff;
@@ -97,6 +97,15 @@
   .inv-totals .t-lbl { text-align: right; font-weight: bold; }
   .inv-totals .t-val { text-align: right; width: 110px; border: 1px solid #999; }
   .inv-pay { margin-top: 26px; }
+  .inv-for { margin: 0 0 6px; }
+  .inv-gst-note { font-size: 11px; margin: 8px 0 0; text-align: right; }
+  .inv-items-physio th { font-size: 9.5px; padding: 4px 4px; }
+  .inv-items-physio td { font-size: 10px; padding: 4px 4px; line-height: 1.25; }
+  .inv-items-physio td.nw { white-space: nowrap; }
+  .inv-items-physio td.item { white-space: nowrap; font-size: 9.5px; }
+  .inv-sheet-physio .inv-to { margin-bottom: 10px; }
+  .inv-sheet-physio .inv-totals td { padding: 3px 8px; }
+  .inv-sheet-physio .inv-pay { margin-top: 16px; }
   .inv-pay h3 { font-size: 13px; text-decoration: underline; margin: 0 0 6px; }
   .inv-pay td { padding: 2px 12px 2px 0; }
 
@@ -112,7 +121,7 @@
 <body>
 
 <header class="appbar">
-  <h1>NDIS Invoice 工具</h1>
+  <h1>NDIS Invoice 工具 v2 <span style="font-size:12px;font-weight:normal;color:var(--muted);">Support work + Physiotherapy</span></h1>
   <nav class="tabs" id="tabNav">
     <button data-tab="sessions" class="active">加新的 Session</button>
     <button data-tab="invoice">出 Invoice</button>
@@ -132,15 +141,14 @@
 <!-- ============ TAB: SESSIONS ============ -->
 <section class="tab active" id="tab-sessions">
   <div class="card" id="migrateHint" style="border-color:#f59e0b; background:#fffbeb; display:none;">
-    <h2>客人不见了？不是另一套工具</h2>
-    <p class="muted" style="margin:0 0 10px;">这是同一份 NDIS Invoice 工具。浏览器按<strong>网址</strong>分开存资料。你原来的客人/session 还在旧地址：</p>
+    <h2>这是 v2（独立资料）</h2>
+    <p class="muted" style="margin:0 0 10px;">v2 有自己的资料，不会读、也不会改原版的资料。原版仍在：</p>
     <p style="margin:0 0 10px;"><a href="https://jackson1-netizen.github.io/ndis-invoice-tool/" target="_blank" rel="noopener">https://jackson1-netizen.github.io/ndis-invoice-tool/</a></p>
     <ol class="muted" style="margin:0 0 10px; padding-left:20px;">
-      <li>打开上面那个网站（就是你一直在用的）</li>
-      <li>「设置」→「导出备份 (JSON)」</li>
-      <li>回到本页「设置」→「导入备份」，选刚下载的文件</li>
+      <li>要把原版的客人/session 复制过来：在原版「设置」→「导出备份 (JSON)」</li>
+      <li>回到本页「设置」→「导入备份」，选刚下载的文件（只读那个文件，原版不会被改）</li>
     </ol>
-    <p class="muted" style="margin:0;">或点页顶「连接 .openjarvis 账本」，选中文件夹 <code>C:\Users\Admin\.openjarvis</code> 即可（不用再点 json）。</p>
+    <p class="muted" style="margin:0;">v2 的本机账本文件是 <code>invoice-data-v2.json</code>（放在 <code>C:\Users\Admin\.openjarvis</code>），和原版的 <code>invoice-data.json</code> 分开。</p>
   </div>
   <div class="card">
     <h2 id="sessFormTitle">添加 Session</h2>
@@ -148,7 +156,13 @@
       <label class="field">客人
         <select id="sessClient"></select>
       </label>
-      <label class="field">支持类型
+      <label class="field">Invoice 类型
+        <select id="sessKind">
+          <option value="support">Support work</option>
+          <option value="physio">Physiotherapy</option>
+        </select>
+      </label>
+      <label class="field support-only">支持类型
         <select id="sessSupportType">
           <option value="community">Community Participation（出门/社区）</option>
           <option value="dailyLife">Daily Life Self-Care（居家日常）</option>
@@ -166,11 +180,27 @@
       <label class="field" id="sessKmField">开车公里数（没有就留空）
         <input type="number" id="sessKm" min="0" step="0.1" placeholder="0">
       </label>
-      <label class="check" style="align-self:end;">
+      <label class="field physio-only">Claim type
+        <select id="sessClaimType">
+          <option value="direct">Direct service（面对面）</option>
+          <option value="nf2f">Non-Face-to-Face（报告、计划等）</option>
+          <option value="cancellation">Cancellation（短通知取消 / no show）</option>
+        </select>
+      </label>
+      <label class="field physio-only">内容（印在 Description）
+        <input id="sessPhysioDesc" placeholder="Initial assessment">
+      </label>
+      <label class="field physio-only physio-travel">去程 travel 时间（分钟，最多 30）
+        <input type="number" id="sessTravelOut" min="0" max="30" step="1" placeholder="0">
+      </label>
+      <label class="field physio-only physio-travel">回程 travel 时间（分钟，最多 30）
+        <input type="number" id="sessTravelRet" min="0" max="30" step="1" placeholder="0">
+      </label>
+      <label class="check support-only" style="align-self:end;">
         <input type="checkbox" id="sessPH"> Public Holiday
         <span class="ph-name" id="phName"></span>
       </label>
-      <label class="check" style="align-self:end;">
+      <label class="check support-only" style="align-self:end;">
         <input type="checkbox" id="sessNF2F"> Non face-to-face（电话等）
       </label>
     </div>
@@ -179,7 +209,8 @@
       <button class="primary" id="sessSaveBtn">保存 Session</button>
       <button class="ghost" id="sessCancelBtn" style="display:none;">取消编辑</button>
     </div>
-    <div class="hint">默认面对面。勾选 Non face-to-face 用于电话等（发票只标注 Non face-to-face，不算开车）。周六/周日/假日整天一个价；平日按 白天 / 晚间 8pm 后 / 夜间 0–6am 自动拆开（Daily Life 有独立 Night code；Community 没有 Night code，0–6am 仍按 Daytime）。</div>
+    <div class="hint physio-only">Physiotherapy：一个小时价 × 时数，不分平日周末。Travel 时间每程最多 30 分钟（_PT 编号，上限 $92/h），km 只在 Direct service 时可收（15_799_0128_1_3）。NF2F / Cancellation 不收 travel。</div>
+    <div class="hint support-only">默认面对面。勾选 Non face-to-face 用于电话等（发票只标注 Non face-to-face，不算开车）。周六/周日/假日整天一个价；平日按 白天 / 晚间 8pm 后 / 夜间 0–6am 自动拆开（Daily Life 有独立 Night code；Community 没有 Night code，0–6am 仍按 Daytime）。</div>
   </div>
 
   <div class="card">
@@ -193,6 +224,12 @@
   <div class="card">
     <h2>生成新 Invoice</h2>
     <div class="grid">
+      <label class="field">Invoice 类型
+        <select id="invKind">
+          <option value="support">Support work</option>
+          <option value="physio">Physiotherapy</option>
+        </select>
+      </label>
       <label class="field">客人
         <select id="invClient"></select>
       </label>
@@ -201,6 +238,9 @@
       </label>
       <label class="field">到期日 (Due date)
         <input type="date" id="invDue">
+      </label>
+      <label class="field" id="invPaymentsField" style="display:none;">Payments（已收，默认 0）
+        <input type="number" id="invPayments" min="0" step="0.01" placeholder="0.00">
       </label>
     </div>
     <div id="invSessionPick" style="margin-top:14px;"></div>
@@ -312,6 +352,9 @@
       <label class="field">Plan Manager Email
         <input id="cliPmEmail" placeholder="invoices@ndsp.com.au">
       </label>
+      <label class="field">Plan Manager 地址（physio Bill To，可留空）
+        <input id="cliPmAddress" placeholder="PO Box 123, Melbourne VIC 3000">
+      </label>
     </div>
     <details style="margin-top:12px;">
       <summary class="muted" style="cursor:pointer;">这个客人用特别费率？（留空 = 用设置里的标准价）</summary>
@@ -406,13 +449,33 @@
   </div>
 
   <div class="card">
+    <h2>Physiotherapy 费率和 Line Items</h2>
+    <div class="grid">
+      <label class="field" style="grid-column: 1 / -1;">For: 支援类别（印在 physio invoice）
+        <input id="setPhyCategory">
+      </label>
+      <label class="field">Direct service $/h <input type="number" id="setPhyRateDirect" step="0.01"></label>
+      <label class="field">Non-Face-to-Face $/h <input type="number" id="setPhyRateNf2f" step="0.01"></label>
+      <label class="field">Cancellation $/h <input type="number" id="setPhyRateCancel" step="0.01"></label>
+      <label class="field">Travel 时间 $/h <input type="number" id="setPhyRateTravel" step="0.01"></label>
+      <label class="field">Travel $/km <input type="number" id="setPhyRateKm" step="0.01"></label>
+      <label class="field">Direct item <input id="setPhyLiDirect"></label>
+      <label class="field">NF2F item <input id="setPhyLiNf2f"></label>
+      <label class="field">Cancellation item <input id="setPhyLiCancel"></label>
+      <label class="field">Travel 时间 item <input id="setPhyLiTravel"></label>
+      <label class="field">Travel km item <input id="setPhyLiKm"></label>
+    </div>
+    <div class="hint" id="phyCapHint"></div>
+  </div>
+
+  <div class="card">
     <h2>Invoice 编号</h2>
     <div class="grid">
       <label class="field">前缀 <input id="setPrefix"></label>
       <label class="field">下一个号码 <input type="number" id="setNextNo" min="0" step="1"></label>
       <label class="field">付款期限（天） <input type="number" id="setTerms" min="0" step="1"></label>
     </div>
-    <div class="hint">允许从 0 起（会出 INV-0000）。可与已有编号重复；已出的单也可在「Invoice 记录」里改数字。</div>
+    <div class="hint">Support work 和 Physiotherapy 共用同一串编号。允许从 0 起（会出 INV-0000）。可与已有编号重复；已出的单也可在「Invoice 记录」里改数字。</div>
   </div>
 
   <div style="margin: 4px 0 18px;">
@@ -439,7 +502,10 @@
 'use strict';
 
 /* ================= state ================= */
-const STORAGE_KEY = 'ndis-invoice-tool';
+// v2 has its OWN storage. It must never read or write the v1 keys
+// (v1 localStorage key, v1 IndexedDB, v1 ledger file, and the 127.0.0.1 ledger server).
+const STORAGE_KEY = 'ndis-invoice-tool-v2';
+const LEDGER_FILE_NAME = 'invoice-data-v2.json';
 
 const DEFAULT_STATE = {
   settings: {
@@ -477,7 +543,14 @@ const DEFAULT_STATE = {
     lineItems: { weekday: '04_104_0125_6_1', weekdayEvening: '04_103_0125_6_1',
                  saturday: '04_105_0125_6_1', sunday: '04_106_0125_6_1',
                  publicHoliday: '04_102_0125_6_1', travel: '04_590_0125_6_1' },
-    serviceName: 'Access Community, Social and Recreational Activities - Standard'
+    serviceName: 'Access Community, Social and Recreational Activities - Standard',
+    physio: {
+      supportCategory: 'Capacity Building – Improved Daily Living',
+      rates: { direct: 183.99, nf2f: 183.99, cancellation: 183.99, travel: 92.00, km: 0.99 },
+      lineItems: { direct: '15_055_0128_1_3', nf2f: '15_055_0128_1_3_NF',
+                   cancellation: '15_055_0128_1_3_CA', travel: '15_055_0128_1_3_PT',
+                   km: '15_799_0128_1_3' }
+    }
   },
   clients: [],
   sessions: [],
@@ -503,13 +576,20 @@ function loadState() {
   };
   const supportServiceNames = Object.assign({}, d.settings.supportServiceNames, s.supportServiceNames || {});
   if (s.serviceName && !s.supportServiceNames) supportServiceNames.community = s.serviceName;
+  const sp = s.physio || {};
+  const physio = {
+    supportCategory: sp.supportCategory || d.settings.physio.supportCategory,
+    rates: Object.assign({}, d.settings.physio.rates, sp.rates || {}),
+    lineItems: Object.assign({}, d.settings.physio.lineItems, sp.lineItems || {})
+  };
   return {
     settings: Object.assign(d.settings, s, {
       rates: rates,
       supportLineItems: supportLineItems,
       supportServiceNames: supportServiceNames,
       lineItems: supportLineItems.community,
-      serviceName: supportServiceNames.community
+      serviceName: supportServiceNames.community,
+      physio: physio
     }),
     clients: saved.clients || [],
     sessions: saved.sessions || [],
@@ -517,8 +597,9 @@ function loadState() {
   };
 }
 let state = loadState();
-const LEDGER_URL = 'http://127.0.0.1:8765/data.json';
-const IDB_NAME = 'ndis-invoice-disk';
+// The desktop bat's local ledger server (port 8765) serves the v1 ledger, so v2 never connects to it.
+const LEDGER_URL = null;
+const IDB_NAME = 'ndis-invoice-disk-v2';
 let httpConnected = false;
 let diskHandle = null;
 let ledgerSnap = '';
@@ -572,10 +653,10 @@ function updateLedgerBanner() {
     tx.textContent = '账本：已连本机服务 (8765)。Jarvis 改完这里会更新。';
   } else if (diskHandle) {
     el.className = 'ledger-banner on';
-    tx.textContent = '账本：已连本机文件（GitHub 页也可同步，不必开 bat）。';
+    tx.textContent = '账本：已连本机文件 ' + LEDGER_FILE_NAME + '（v2 专用，和原版分开）。';
   } else {
     el.className = 'ledger-banner off';
-    tx.textContent = '账本：仅此浏览器。点「连接 .openjarvis 账本」，选中 C:\\Users\\Admin\\.openjarvis 文件夹即可。';
+    tx.textContent = '账本：仅此浏览器（v2）。点「连接 .openjarvis 账本」，选中 C:\\Users\\Admin\\.openjarvis 文件夹，会用 ' + LEDGER_FILE_NAME + '。';
   }
 }
 
@@ -672,6 +753,7 @@ async function absorbRemote(remoteObj) {
 }
 
 async function connectHttpLedger() {
+  if (!LEDGER_URL) throw new Error('v2: http ledger disabled');
   const r = await fetch(LEDGER_URL);
   if (!r.ok) throw new Error('ledger');
   const file = await r.json();
@@ -695,14 +777,14 @@ async function connectDiskHandle(handle, allowPrompt) {
 
 async function resolveOpenjarvisDir(dir) {
   try {
-    await dir.getFileHandle('invoice-data.json');
+    await dir.getFileHandle(LEDGER_FILE_NAME);
     return dir;
   } catch (e) {
     const names = ['.openjarvis', 'openjarvis'];
     for (let i = 0; i < names.length; i++) {
       try {
         const sub = await dir.getDirectoryHandle(names[i]);
-        await sub.getFileHandle('invoice-data.json');
+        await sub.getFileHandle(LEDGER_FILE_NAME);
         return sub;
       } catch (e2) {}
     }
@@ -713,10 +795,10 @@ async function resolveOpenjarvisDir(dir) {
 
 async function fileHandleFromOpenjarvisDir(dir) {
   try {
-    return await dir.getFileHandle('invoice-data.json');
+    return await dir.getFileHandle(LEDGER_FILE_NAME);
   } catch (e) {
     if (dir && (dir.name === '.openjarvis' || dir.name === 'openjarvis')) {
-      return await dir.getFileHandle('invoice-data.json', { create: true });
+      return await dir.getFileHandle(LEDGER_FILE_NAME, { create: true });
     }
     throw e;
   }
@@ -746,13 +828,13 @@ async function pickDiskLedger() {
     const startIn = existingDir || existingFile || 'desktop';
     let fileHandle = null;
     if (window.showDirectoryPicker) {
-      const dirOpts = { id: 'openjarvis-ledger-dir', mode: 'readwrite', startIn: startIn };
+      const dirOpts = { id: 'openjarvis-ledger-dir-v2', mode: 'readwrite', startIn: startIn };
       let picked;
       try {
         picked = await window.showDirectoryPicker(dirOpts);
       } catch (e) {
         if (e && e.name === 'AbortError') throw e;
-        picked = await window.showDirectoryPicker({ id: 'openjarvis-ledger-dir', mode: 'readwrite' });
+        picked = await window.showDirectoryPicker({ id: 'openjarvis-ledger-dir-v2', mode: 'readwrite' });
       }
       let dir;
       try {
@@ -765,9 +847,9 @@ async function pickDiskLedger() {
       await idbPut('dir', dir);
     } else {
       const fileOpts = {
-        id: 'openjarvis-ledger-file',
+        id: 'openjarvis-ledger-file-v2',
         types: [{ description: 'Invoice JSON', accept: { 'application/json': ['.json'] } }],
-        suggestedName: 'invoice-data.json'
+        suggestedName: LEDGER_FILE_NAME
       };
       if (startIn) fileOpts.startIn = startIn;
       const handles = await window.showOpenFilePicker(fileOpts);
@@ -895,6 +977,7 @@ function serviceNameFor(session, settings) {
 
 // Returns array of { serviceDate, description, lineItem, qty, unit, rate, amount }
 function sessionLines(session, client, settings) {
+  if (isPhysio(session)) return physioLines(session, settings);
   const rates = effectiveRates(client);
   const li = lineItemsFor(session, settings);
   const name = serviceNameFor(session, settings);
@@ -941,6 +1024,101 @@ function sessionLines(session, client, settings) {
   }
   return lines;
 }
+
+/* ================= physiotherapy engine (v2) ================= */
+// NDIS Pricing Schedule 2026-27, National (VIC) price limits. km: PAPL "up to $0.99 a kilometre" (own vehicle).
+const PHYSIO_CAPS = { direct: 183.99, nf2f: 183.99, cancellation: 183.99, travel: 92.00, km: 0.99 };
+const PHYSIO_MAX_TRAVEL_MIN = 30; // per direction, MMM1-3
+const PHYSIO_CLAIM_LABEL = { direct: 'Direct', nf2f: 'NF2F', cancellation: 'Cancellation',
+  travel: 'Travel', km: 'Travel' };
+const PHYSIO_ITEM_NAME = {
+  direct: 'Therapy - Physiotherapist - Direct Service',
+  nf2f: 'Therapy - Physiotherapist - Non-Face-to-Face',
+  cancellation: 'Therapy - Physiotherapist - Cancellation',
+  travel: 'Therapy - Physiotherapist - Provider Travel',
+  km: 'Provider travel - non-labour costs'
+};
+const isPhysio = session => !!session && session.kind === 'physio';
+const physioClaimOf = session =>
+  ['direct', 'nf2f', 'cancellation'].includes(session.claimType) ? session.claimType : 'direct';
+const minToTime = m => { m = ((m % 1440) + 1440) % 1440; return String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0'); };
+
+// Errors for physio rates above the NDIS cap (empty array = ok)
+function physioRateErrors(rates) {
+  const errs = [];
+  for (const k of Object.keys(PHYSIO_CAPS)) {
+    const v = Number(rates[k]);
+    if (isNaN(v) || v < 0) errs.push(k + ': 价格无效');
+    else if (v > PHYSIO_CAPS[k] + 1e-9) errs.push(PHYSIO_ITEM_NAME[k] + ' $' + v.toFixed(2) + ' 超过 NDIS 上限 $' + PHYSIO_CAPS[k].toFixed(2));
+  }
+  return errs;
+}
+
+function physioSessionErrors(session) {
+  const errs = [];
+  const out = Number(session.travelOutMin) || 0, ret = Number(session.travelReturnMin) || 0;
+  if (out < 0 || ret < 0) errs.push('travel 时间不能是负数');
+  if (out > PHYSIO_MAX_TRAVEL_MIN || ret > PHYSIO_MAX_TRAVEL_MIN) errs.push('travel 时间每程最多 30 分钟');
+  if (physioClaimOf(session) !== 'direct' && (out > 0 || ret > 0 || Number(session.km) > 0))
+    errs.push('只有 Direct service 可以收 travel 时间和 km');
+  return errs;
+}
+
+// Same line shape as sessionLines + startTime/endTime/claimType/gst
+function physioLines(session, settings) {
+  const ph = (settings.physio || DEFAULT_STATE.settings.physio);
+  const r = ph.rates, li = ph.lineItems;
+  const claim = physioClaimOf(session);
+  const start = toMin(session.startTime), end = toMin(session.endTime);
+  const lines = [];
+  function push(kind, desc, s, e, qty, unit) {
+    if (!(qty > 0)) return;
+    const rate = Number(r[kind]);
+    lines.push({ serviceDate: session.date, startTime: s, endTime: e, description: desc,
+      lineItem: li[kind], claimType: PHYSIO_CLAIM_LABEL[kind], qty: qty, unit: unit,
+      rate: rate, gst: 0, amount: round2(qty * rate) });
+  }
+  const content = (session.physioDescription || '').trim();
+  const mainDesc = PHYSIO_ITEM_NAME[claim] + (content ? ': ' + content : '');
+  const out = claim === 'direct' ? Math.min(Number(session.travelOutMin) || 0, PHYSIO_MAX_TRAVEL_MIN) : 0;
+  const ret = claim === 'direct' ? Math.min(Number(session.travelReturnMin) || 0, PHYSIO_MAX_TRAVEL_MIN) : 0;
+  push('travel', PHYSIO_ITEM_NAME.travel + ' (to participant)', minToTime(start - out), session.startTime, round2(out / 60), 'h');
+  push(claim, mainDesc, session.startTime, session.endTime, round2((end - start) / 60), 'h');
+  push('travel', PHYSIO_ITEM_NAME.travel + ' (return)', session.endTime, minToTime(end + ret), round2(ret / 60), 'h');
+  const km = claim === 'direct' ? (Number(session.km) || 0) : 0;
+  push('km', PHYSIO_ITEM_NAME.km + ' (' + round2(km) + ' km)', '', '', round2(km), 'km');
+  return lines;
+}
+
+// [start, end] minutes incl. physio travel windows
+function sessionWindow(s) {
+  let a = toMin(s.startTime), b = toMin(s.endTime);
+  if (isPhysio(s) && physioClaimOf(s) === 'direct') {
+    a -= Math.min(Number(s.travelOutMin) || 0, PHYSIO_MAX_TRAVEL_MIN);
+    b += Math.min(Number(s.travelReturnMin) || 0, PHYSIO_MAX_TRAVEL_MIN);
+  }
+  return [a, b];
+}
+function findOverlaps(sessions) {
+  const msgs = [];
+  for (const s of sessions) {
+    const [a, b] = sessionWindow(s);
+    for (const o of state.sessions) {
+      if (o.id === s.id || o.date !== s.date) continue;
+      const [c, d] = sessionWindow(o);
+      if (Math.min(b, d) - Math.max(a, c) > 0) {
+        const oc = getClient(o.clientId);
+        msgs.push(fmtDate(s.date) + ' ' + s.startTime + '–' + s.endTime + ' 和 ' +
+          (oc ? oc.name : '?') + ' ' + o.startTime + '–' + o.endTime + '（' + sessionTypeLabel(o) + '）重叠');
+      }
+    }
+  }
+  return msgs;
+}
+function sessionTypeLabel(s) {
+  return isPhysio(s) ? 'Physio · ' + PHYSIO_CLAIM_LABEL[physioClaimOf(s)] : SUPPORT_TYPE_LABEL[supportTypeOf(s)];
+}
+
 const sessionTotal = (session, client) =>
   round2(sessionLines(session, client, state.settings).reduce((a, l) => a + l.amount, 0));
 
@@ -1185,7 +1363,7 @@ const OV_FIELDS = [['ovWeekday','weekday'],['ovEvening','weekdayEvening'],['ovNi
 
 function clearClientForm() {
   editingClientId = null;
-  ['cliName','cliNdis','cliAddress','cliPmName','cliPmEmail'].forEach(id => $(id).value = '');
+  ['cliName','cliNdis','cliAddress','cliPmName','cliPmEmail','cliPmAddress'].forEach(id => $(id).value = '');
   OV_FIELDS.forEach(([id]) => $(id).value = '');
   $('cliFormTitle').textContent = '添加客人';
   $('cliCancelBtn').style.display = 'none';
@@ -1199,6 +1377,7 @@ $('cliSaveBtn').addEventListener('click', () => {
   OV_FIELDS.forEach(([id, key]) => { const v = $(id).value; if (v !== '') overrides[key] = Number(v); });
   const data = { name: name, ndisNumber: ndis, address: $('cliAddress').value.trim(),
     planManagerName: $('cliPmName').value.trim(), planManagerEmail: $('cliPmEmail').value.trim(),
+    planManagerAddress: $('cliPmAddress').value.trim(),
     rateOverrides: overrides };
   if (editingClientId) {
     Object.assign(getClient(editingClientId), data);
@@ -1230,6 +1409,7 @@ $('cliList').addEventListener('click', e => {
     $('cliName').value = c.name; $('cliNdis').value = c.ndisNumber;
     $('cliAddress').value = c.address || ''; $('cliPmName').value = c.planManagerName || '';
     $('cliPmEmail').value = c.planManagerEmail || '';
+    $('cliPmAddress').value = c.planManagerAddress || '';
     OV_FIELDS.forEach(([id, key]) => {
       $(id).value = (c.rateOverrides && c.rateOverrides[key] != null) ? c.rateOverrides[key] : '';
     });
@@ -1272,6 +1452,22 @@ function syncSessKmVisibility() {
 
 $('sessNF2F').addEventListener('change', syncSessKmVisibility);
 
+function syncSessKind() {
+  const physio = $('sessKind').value === 'physio';
+  document.querySelectorAll('#tab-sessions .support-only').forEach(el => { el.style.display = physio ? 'none' : ''; });
+  document.querySelectorAll('#tab-sessions .physio-only').forEach(el => { el.style.display = physio ? '' : 'none'; });
+  $('sessSupportHint').style.display = physio ? 'none' : '';
+  if (physio) {
+    const direct = $('sessClaimType').value === 'direct';
+    document.querySelectorAll('#tab-sessions .physio-travel').forEach(el => { el.style.display = direct ? '' : 'none'; });
+    $('sessKmField').style.display = direct ? '' : 'none';
+  } else {
+    syncSessKmVisibility();
+  }
+}
+$('sessKind').addEventListener('change', syncSessKind);
+$('sessClaimType').addEventListener('change', syncSessKind);
+
 function syncSupportHint() {
   const t = $('sessSupportType').value === 'dailyLife' ? 'dailyLife' : 'community';
   const li = state.settings.supportLineItems[t];
@@ -1297,8 +1493,11 @@ function clearSessionForm() {
   const name = VIC_HOLIDAYS[$('sessDate').value];
   $('sessPH').checked = !!name; $('phName').textContent = name ? '(' + name + ')' : '';
   $('sessNF2F').checked = false;
+  $('sessClaimType').value = 'direct'; $('sessPhysioDesc').value = '';
+  $('sessTravelOut').value = ''; $('sessTravelRet').value = '';
   syncSessKmVisibility();
   syncSupportHint();
+  syncSessKind();
   $('sessFormTitle').textContent = '添加 Session';
   $('sessCancelBtn').style.display = 'none';
 }
@@ -1309,6 +1508,25 @@ $('sessSaveBtn').addEventListener('click', () => {
   if (!clientId) { alert('请先添加客人（"客人"页签）。'); return; }
   if (!date || !start || !end) { alert('日期、开始时间、结束时间都要填。'); return; }
   if (toMin(end) <= toMin(start)) { alert('结束时间要在开始时间之后（不支持跨午夜）。'); return; }
+  if ($('sessKind').value === 'physio') {
+    const claimType = ['direct', 'nf2f', 'cancellation'].includes($('sessClaimType').value) ? $('sessClaimType').value : 'direct';
+    const direct = claimType === 'direct';
+    const numOr0 = id => ($(id).value === '' ? 0 : Number($(id).value));
+    const pdata = { clientId: clientId, date: date, startTime: start, endTime: end, kind: 'physio',
+      claimType: claimType, physioDescription: $('sessPhysioDesc').value.trim(),
+      travelOutMin: direct ? numOr0('sessTravelOut') : 0, travelReturnMin: direct ? numOr0('sessTravelRet') : 0,
+      km: direct ? numOr0('sessKm') : 0, isPublicHoliday: false, isNonFaceToFace: claimType === 'nf2f' };
+    if ([pdata.travelOutMin, pdata.travelReturnMin, pdata.km].some(v => isNaN(v) || v < 0)) { alert('travel 时间或公里数不对。'); return; }
+    const perrs = physioSessionErrors(pdata);
+    if (perrs.length) { alert(perrs.join('\n')); return; }
+    if (editingSessionId) {
+      Object.assign(state.sessions.find(s => s.id === editingSessionId), pdata);
+    } else {
+      state.sessions.push(Object.assign({ id: uid(), invoiceId: null }, pdata));
+    }
+    saveState(); clearSessionForm(); renderAll(); toast('Session 已保存');
+    return;
+  }
   const isNF2F = $('sessNF2F').checked;
   const km = isNF2F ? 0 : ($('sessKm').value === '' ? 0 : Number($('sessKm').value));
   if (isNaN(km) || km < 0) { alert('公里数不对。'); return; }
@@ -1317,6 +1535,8 @@ $('sessSaveBtn').addEventListener('click', () => {
                  km: km, isPublicHoliday: $('sessPH').checked, isNonFaceToFace: isNF2F,
                  supportType: supportType };
   if (editingSessionId) {
+    const ex = state.sessions.find(s => s.id === editingSessionId);
+    if (ex && ex.kind) { delete ex.kind; delete ex.claimType; delete ex.physioDescription; delete ex.travelOutMin; delete ex.travelReturnMin; }
     Object.assign(state.sessions.find(s => s.id === editingSessionId), data);
   } else {
     state.sessions.push(Object.assign({ id: uid(), invoiceId: null }, data));
@@ -1340,8 +1560,8 @@ function renderSessions() {
   for (const s of open) {
     const c = getClient(s.clientId);
     html += '<tr><td>' + fmtDate(s.date) + (s.isPublicHoliday ? ' <span class="ph-name">PH</span>' : '') +
-      (s.isNonFaceToFace ? ' <span class="muted">NF2F</span>' : '') +
-      ' <span class="muted">' + esc(SUPPORT_TYPE_LABEL[supportTypeOf(s)]) + '</span>' +
+      (s.isNonFaceToFace && !isPhysio(s) ? ' <span class="muted">NF2F</span>' : '') +
+      ' <span class="muted">' + esc(sessionTypeLabel(s)) + '</span>' +
       '</td><td>' + esc(c ? c.name : '?') + '</td><td>' + s.startTime + '–' + s.endTime +
       (!s.isNonFaceToFace && s.km > 0 ? '<div class="muted">' + s.km + ' km</div>' : '') +
       '</td><td class="muted">' + describeLines(s, c) + '</td>' +
@@ -1362,8 +1582,13 @@ $('sessList').addEventListener('click', e => {
     $('sessKm').value = s.km || ''; $('sessPH').checked = s.isPublicHoliday;
     $('sessNF2F').checked = !!s.isNonFaceToFace;
     $('sessSupportType').value = supportTypeOf(s);
+    $('sessKind').value = isPhysio(s) ? 'physio' : 'support';
+    $('sessClaimType').value = isPhysio(s) ? physioClaimOf(s) : 'direct';
+    $('sessPhysioDesc').value = s.physioDescription || '';
+    $('sessTravelOut').value = s.travelOutMin || ''; $('sessTravelRet').value = s.travelReturnMin || '';
     syncSessKmVisibility();
     syncSupportHint();
+    syncSessKind();
     $('phName').textContent = VIC_HOLIDAYS[s.date] ? '(' + VIC_HOLIDAYS[s.date] + ')' : '';
     $('sessFormTitle').textContent = '编辑 Session';
     $('sessCancelBtn').style.display = '';
@@ -1382,15 +1607,16 @@ function renderInvoicePick() {
   const box = $('invSessionPick');
   if (!clientId) { box.innerHTML = '<p class="muted">先添加客人和 session。</p>'; return; }
   const c = getClient(clientId);
-  const open = state.sessions.filter(s => !s.invoiceId && s.clientId === clientId)
+  const wantPhysio = $('invKind').value === 'physio';
+  const open = state.sessions.filter(s => !s.invoiceId && s.clientId === clientId && isPhysio(s) === wantPhysio)
     .sort((a, b) => a.date.localeCompare(b.date) || a.startTime.localeCompare(b.startTime));
-  if (!open.length) { box.innerHTML = '<p class="muted">这个客人没有待开票的 session。</p>'; return; }
+  if (!open.length) { box.innerHTML = '<p class="muted">这个客人没有待开票的 ' + (wantPhysio ? 'Physiotherapy' : 'Support work') + ' session。</p>'; return; }
   let html = '<table class="list"><tr><th></th><th>日期</th><th>时间</th><th>明细</th><th>合计</th></tr>';
   for (const s of open) {
     html += '<tr><td><input type="checkbox" class="pickSess" value="' + s.id + '" checked></td>' +
       '<td>' + fmtDate(s.date) + (s.isPublicHoliday ? ' <span class="ph-name">PH</span>' : '') +
-      (s.isNonFaceToFace ? ' <span class="muted">NF2F</span>' : '') +
-      ' <span class="muted">' + esc(SUPPORT_TYPE_LABEL[supportTypeOf(s)]) + '</span></td>' +
+      (s.isNonFaceToFace && !isPhysio(s) ? ' <span class="muted">NF2F</span>' : '') +
+      ' <span class="muted">' + esc(sessionTypeLabel(s)) + '</span></td>' +
       '<td>' + s.startTime + '–' + s.endTime + (!s.isNonFaceToFace && s.km > 0 ? '<div class="muted">' + s.km + ' km</div>' : '') + '</td>' +
       '<td class="muted">' + describeLines(s, c) + '</td>' +
       '<td class="total-cell">' + money(sessionTotal(s, c)) + '</td></tr>';
@@ -1398,6 +1624,10 @@ function renderInvoicePick() {
   box.innerHTML = html + '</table>';
 }
 $('invClient').addEventListener('change', renderInvoicePick);
+$('invKind').addEventListener('change', () => {
+  $('invPaymentsField').style.display = $('invKind').value === 'physio' ? '' : 'none';
+  renderInvoicePick();
+});
 $('invDate').addEventListener('change', () => {
   if ($('invDate').value) $('invDue').value = addDays($('invDate').value, state.settings.paymentTermsDays);
 });
@@ -1418,6 +1648,7 @@ $('invGenBtn').addEventListener('click', () => {
   if (!ids.length) { alert('至少勾选一条 session。'); return; }
   const invoiceDate = $('invDate').value || todayStr();
   const dueDate = $('invDue').value || addDays(invoiceDate, st.paymentTermsDays);
+  if ($('invKind').value === 'physio') { generatePhysioInvoice(client, ids, invoiceDate, dueDate); return; }
 
   const sessions = state.sessions.filter(s => ids.includes(s.id))
     .sort((a, b) => a.date.localeCompare(b.date) || a.startTime.localeCompare(b.startTime));
@@ -1446,10 +1677,112 @@ $('invGenBtn').addEventListener('click', () => {
   toast('已生成 ' + number);
 });
 
+// Physiotherapy invoice: same numbering sequence; blocks above-cap prices, >30 min travel and overlaps.
+function generatePhysioInvoice(client, ids, invoiceDate, dueDate) {
+  const st = state.settings;
+  if (!client.planManagerName) { alert('Physiotherapy invoice 开给 plan manager：先在「客人」填 Plan Manager。'); return null; }
+  const sessions = state.sessions.filter(s => ids.includes(s.id) && isPhysio(s))
+    .sort((a, b) => a.date.localeCompare(b.date) || a.startTime.localeCompare(b.startTime));
+  if (sessions.length !== ids.length) { alert('只能勾选 Physiotherapy session。'); return null; }
+  const errs = physioRateErrors(st.physio.rates);
+  for (const s of sessions) physioSessionErrors(s).forEach(e => errs.push(fmtDate(s.date) + ' ' + s.startTime + ': ' + e));
+  let lines = [];
+  for (const s of sessions) lines = lines.concat(physioLines(s, st));
+  for (const l of lines) {
+    const kind = Object.keys(st.physio.lineItems).find(k => st.physio.lineItems[k] === l.lineItem);
+    const cap = kind ? PHYSIO_CAPS[kind] : null;
+    if (cap != null && l.rate > cap + 1e-9) errs.push(l.lineItem + ' 单价 ' + money(l.rate) + ' 超过 NDIS 上限 ' + money(cap));
+  }
+  findOverlaps(sessions).forEach(m => errs.push('时间重叠：' + m));
+  if (errs.length) { alert('不能生成 invoice：\n' + Array.from(new Set(errs)).join('\n')); return null; }
+  const payments = Math.max(0, round2(Number($('invPayments').value) || 0));
+  const subtotal = round2(lines.reduce((a, l) => a + l.amount, 0));
+  const seq = Math.max(0, parseInt(st.nextInvoiceNumber, 10) || 0);
+  const number = formatInvoiceNumber(seq);
+  const inv = {
+    id: uid(), number: number, invoiceType: 'physio', invoiceDate: invoiceDate, dueDate: dueDate,
+    voided: false, sessionIds: sessions.map(s => s.id),
+    provider: { name: st.providerName, abn: st.abn, address: st.address,
+      email: st.email, phone: st.phone, bankAccountName: st.bankAccountName,
+      bankBsb: st.bankBsb, bankAccountNumber: st.bankAccountNumber },
+    client: { name: client.name, ndisNumber: client.ndisNumber, address: client.address,
+      planManagerName: client.planManagerName, planManagerEmail: client.planManagerEmail,
+      planManagerAddress: client.planManagerAddress || '' },
+    supportCategory: st.physio.supportCategory,
+    lines: lines, subtotal: subtotal, gst: 0, total: subtotal,
+    payments: payments, amountDue: round2(subtotal - payments)
+  };
+  state.invoices.push(inv);
+  st.nextInvoiceNumber = seq + 1;
+  for (const s of sessions) s.invoiceId = inv.id;
+  saveState(); renderAll();
+  showPreview(inv);
+  toast('已生成 ' + number);
+  return inv;
+}
+
 /* ---------- invoice rendering ---------- */
 let previewInvoice = null;
 
+function physioInvoiceHtml(inv) {
+  const p = inv.provider, c = inv.client;
+  let rows = '';
+  for (const l of inv.lines) {
+    const time = l.startTime ? esc(l.startTime) + '–' + esc(l.endTime) : '';
+    rows += '<tr><td class="item">' + esc(l.lineItem) + '</td><td class="nw">' + fmtDate(l.serviceDate) + '</td>' +
+      '<td class="nw">' + time + '</td><td>' + esc(l.description) + '</td>' +
+      '<td>' + esc(l.claimType) + '</td>' +
+      '<td class="num">' + l.qty.toFixed(l.unit === 'km' ? 1 : 2) + (l.unit === 'km' ? ' km' : '') + '</td>' +
+      '<td class="num">' + money(l.rate) + '</td>' +
+      '<td class="num">GST free</td>' +
+      '<td class="num">' + money(l.amount) + '</td></tr>';
+  }
+  const payments = Number(inv.payments) || 0;
+  const due = inv.amountDue != null ? inv.amountDue : round2(inv.total - payments);
+  return '<div class="inv-sheet-physio"><h1 class="inv-title">INVOICE</h1>' +
+    '<div class="inv-top"><table>' +
+    '<tr><td class="lbl">Company:</td><td>' + esc(p.name) + '</td></tr>' +
+    '<tr><td class="lbl">ABN:</td><td>' + esc(p.abn) + '</td></tr>' +
+    '<tr><td class="lbl">Address:</td><td>' + esc(p.address) + '</td></tr>' +
+    (p.email ? '<tr><td class="lbl">Email:</td><td>' + esc(p.email) + '</td></tr>' : '') +
+    (p.phone ? '<tr><td class="lbl">Phone:</td><td>' + esc(p.phone) + '</td></tr>' : '') +
+    '</table><table>' +
+    '<tr><td class="lbl">Invoice no:</td><td>' + esc(inv.number) + '</td></tr>' +
+    '<tr><td class="lbl">Invoice date:</td><td>' + fmtDate(inv.invoiceDate) + '</td></tr>' +
+    '<tr><td class="lbl">Due date:</td><td>' + fmtDate(inv.dueDate) + '</td></tr>' +
+    '</table></div>' +
+    '<hr class="inv-rule">' +
+    '<div class="inv-to"><div><b>BILL TO:</b><br>' +
+    (c.planManagerName ? '<b>' + esc(c.planManagerName) + '</b><br>' : '') +
+    (c.planManagerAddress ? esc(c.planManagerAddress) + '<br>' : '') +
+    (c.planManagerEmail ? esc(c.planManagerEmail) : '') +
+    '</div><table>' +
+    '<tr><td class="lbl">Participant:</td><td>' + esc(c.name) + '</td></tr>' +
+    '<tr><td class="lbl">NDIS number:</td><td>' + esc(c.ndisNumber) + '</td></tr>' +
+    (c.address ? '<tr><td class="lbl">Address:</td><td>' + esc(c.address) + '</td></tr>' : '') +
+    '</table></div>' +
+    '<p class="inv-for"><b>For:</b> ' + esc(inv.supportCategory || '') + '</p>' +
+    '<table class="inv-items inv-items-physio"><tr><th>ITEM NUMBER</th><th>SERVICE DATE</th><th>TIME</th>' +
+    '<th>DESCRIPTION</th><th>CLAIM TYPE</th><th class="num">QTY<br>(HRS)</th><th class="num">UNIT PRICE</th>' +
+    '<th class="num">GST</th><th class="num">AMOUNT</th></tr>' +
+    rows + '</table>' +
+    '<table class="inv-totals">' +
+    '<tr><td class="t-lbl">SUBTOTAL</td><td class="t-val">' + money(inv.subtotal) + '</td></tr>' +
+    '<tr><td class="t-lbl">TOTAL GST</td><td class="t-val">' + money(inv.gst) + '</td></tr>' +
+    '<tr><td class="t-lbl">INVOICE TOTAL</td><td class="t-val"><b>' + money(inv.total) + '</b></td></tr>' +
+    '<tr><td class="t-lbl">PAYMENTS</td><td class="t-val">' + money(payments) + '</td></tr>' +
+    '<tr><td class="t-lbl">AMOUNT DUE</td><td class="t-val"><b>' + money(due) + '</b></td></tr>' +
+    '</table>' +
+    '<p class="inv-gst-note">No GST charged: supplier not registered for GST.</p>' +
+    '<div class="inv-pay"><h3>Payment details</h3><table>' +
+    '<tr><td>Account name:</td><td>' + esc(p.bankAccountName) + '</td></tr>' +
+    '<tr><td>BSB:</td><td>' + esc(p.bankBsb) + '</td></tr>' +
+    '<tr><td>Account number:</td><td>' + esc(p.bankAccountNumber) + '</td></tr>' +
+    '</table></div></div>';
+}
+
 function invoiceHtml(inv) {
+  if (inv.invoiceType === 'physio') return physioInvoiceHtml(inv);
   const p = inv.provider, c = inv.client;
   let rows = '';
   for (const l of inv.lines) {
@@ -1855,8 +2188,17 @@ const LI_DAILY_FIELDS = [
   ['setLiDPH', 'publicHoliday'], ['setLiDTravel', 'travel']
 ];
 
+const PHY_RATE_FIELDS = [['setPhyRateDirect','direct'],['setPhyRateNf2f','nf2f'],['setPhyRateCancel','cancellation'],
+  ['setPhyRateTravel','travel'],['setPhyRateKm','km']];
+const PHY_LI_FIELDS = [['setPhyLiDirect','direct'],['setPhyLiNf2f','nf2f'],['setPhyLiCancel','cancellation'],
+  ['setPhyLiTravel','travel'],['setPhyLiKm','km']];
+
 function renderSettings() {
   const st = state.settings;
+  $('setPhyCategory').value = st.physio.supportCategory;
+  PHY_RATE_FIELDS.forEach(([id, key]) => $(id).value = st.physio.rates[key]);
+  PHY_LI_FIELDS.forEach(([id, key]) => $(id).value = st.physio.lineItems[key] || '');
+  $('phyCapHint').textContent = 'NDIS 2026–27 National 上限：Direct / NF2F / Cancellation $183.99/h，Travel 时间 $92.00/h（每程最多 30 分钟），km $0.99。超过上限不能保存、不能生成 invoice。';
   SETTING_FIELDS.forEach(([id, key]) => $(id).value = st[key]);
   RATE_FIELDS.forEach(([id, key]) => $(id).value = st.rates[key]);
   $('setSvcCommunity').value = st.supportServiceNames.community;
@@ -1869,6 +2211,13 @@ function renderSettings() {
 
 $('setSaveBtn').addEventListener('click', () => {
   const st = state.settings;
+  const newPhyRates = {};
+  PHY_RATE_FIELDS.forEach(([id, key]) => { newPhyRates[key] = Number($(id).value); });
+  const capErrs = physioRateErrors(newPhyRates);
+  if (capErrs.length) { alert('没有保存：\n' + capErrs.join('\n')); return; }
+  st.physio.rates = newPhyRates;
+  st.physio.supportCategory = $('setPhyCategory').value.trim();
+  PHY_LI_FIELDS.forEach(([id, key]) => st.physio.lineItems[key] = $(id).value.trim());
   SETTING_FIELDS.forEach(([id, key]) => st[key] = $(id).value.trim());
   RATE_FIELDS.forEach(([id, key]) => { const v = Number($(id).value); if (!isNaN(v)) st.rates[key] = v; });
   st.supportServiceNames.community = $('setSvcCommunity').value.trim();
@@ -1889,7 +2238,7 @@ $('exportBtn').addEventListener('click', () => {
   const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = 'ndis-invoice-backup-' + todayStr() + '.json';
+  a.download = 'ndis-invoice-v2-backup-' + todayStr() + '.json';
   a.click();
   URL.revokeObjectURL(a.href);
   toast('备份已导出');

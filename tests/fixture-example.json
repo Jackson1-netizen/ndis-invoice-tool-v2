@@ -1,0 +1,29 @@
+{
+  "settings": {
+    "providerName": "EXAMPLE Provider (sample only)",
+    "abn": "00 000 000 000",
+    "address": "1 Example Street, Melbourne VIC 3000",
+    "email": "example@example.com",
+    "phone": "0400 000 000",
+    "bankAccountName": "EXAMPLE ACCOUNT",
+    "bankBsb": "000-000",
+    "bankAccountNumber": "00000000",
+    "invoicePrefix": "INV-",
+    "nextInvoiceNumber": 15,
+    "paymentTermsDays": 14
+  },
+  "clients": [
+    { "id": "exc1", "name": "EXAMPLE Participant (not a real client)", "ndisNumber": "430000000",
+      "address": "2 Sample Road, Box Hill VIC 3128",
+      "planManagerName": "EXAMPLE Plan Managers", "planManagerEmail": "invoices@example.com",
+      "planManagerAddress": "PO Box 0000, Melbourne VIC 3001",
+      "rateOverrides": { "weekday": 70, "saturday": 100, "sunday": 130 } }
+  ],
+  "sessions": [
+    { "id": "s1", "invoiceId": null, "clientId": "exc1", "date": "2026-11-11", "startTime": "09:00", "endTime": "12:15", "km": 20, "isPublicHoliday": false, "isNonFaceToFace": false, "supportType": "dailyLife" },
+    { "id": "s2", "invoiceId": null, "clientId": "exc1", "date": "2026-11-13", "startTime": "10:00", "endTime": "14:00", "km": 15, "isPublicHoliday": false, "isNonFaceToFace": false, "supportType": "community" },
+    { "id": "s3", "invoiceId": null, "clientId": "exc1", "date": "2026-11-14", "startTime": "10:00", "endTime": "13:00", "km": 10, "isPublicHoliday": false, "isNonFaceToFace": false, "supportType": "community" },
+    { "id": "s4", "invoiceId": null, "clientId": "exc1", "date": "2026-11-15", "startTime": "09:00", "endTime": "12:45", "km": 10, "isPublicHoliday": false, "isNonFaceToFace": false, "supportType": "dailyLife" }
+  ],
+  "invoices": []
+}
