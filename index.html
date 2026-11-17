@@ -196,6 +196,12 @@
       <label class="field physio-only physio-travel">回程 travel 时间（分钟，最多 30）
         <input type="number" id="sessTravelRet" min="0" max="30" step="1" placeholder="0">
       </label>
+      <label class="field physio-only physio-travel">停车／过路费 $（实际金额，GST free）
+        <input type="number" id="sessParking" min="0" step="0.01" placeholder="0.00">
+      </label>
+      <label class="field physio-only physio-travel">停车／过路费说明（可留空）
+        <input id="sessParkingNote" placeholder="e.g. hospital car park">
+      </label>
       <label class="check support-only" style="align-self:end;">
         <input type="checkbox" id="sessPH"> Public Holiday
         <span class="ph-name" id="phName"></span>
@@ -209,7 +215,7 @@
       <button class="primary" id="sessSaveBtn">保存 Session</button>
       <button class="ghost" id="sessCancelBtn" style="display:none;">取消编辑</button>
     </div>
-    <div class="hint physio-only">Physiotherapy：一个小时价 × 时数，不分平日周末。Travel 时间每程最多 30 分钟（_PT 编号，上限 $92/h），km 只在 Direct service 时可收（15_799_0128_1_3）。NF2F / Cancellation 不收 travel。</div>
+    <div class="hint physio-only">Physiotherapy：一个小时价 × 时数，不分平日周末。Travel 时间每程最多 30 分钟，和服务同一个 item（15_055_0128_1_3），claim type 选 Provider Travel，上限 $92/h，按实际分钟算。km（$0.99/km）和停车／过路费（实际金额）用 15_799_0128_1_3，只在 Direct service 时可收。NF2F / Cancellation 不收 travel。</div>
     <div class="hint support-only">默认面对面。勾选 Non face-to-face 用于电话等（发票只标注 Non face-to-face，不算开车）。周六/周日/假日整天一个价；平日按 白天 / 晚间 8pm 后 / 夜间 0–6am 自动拆开（Daily Life 有独立 Night code；Community 没有 Night code，0–6am 仍按 Daytime）。</div>
   </div>
 
@@ -462,8 +468,8 @@
       <label class="field">Direct item <input id="setPhyLiDirect"></label>
       <label class="field">NF2F item <input id="setPhyLiNf2f"></label>
       <label class="field">Cancellation item <input id="setPhyLiCancel"></label>
-      <label class="field">Travel 时间 item <input id="setPhyLiTravel"></label>
-      <label class="field">Travel km item <input id="setPhyLiKm"></label>
+      <label class="field">Travel 时间 item（claim type Provider Travel）<input id="setPhyLiTravel"></label>
+      <label class="field">Non-labour item（km + 停车／过路费）<input id="setPhyLiKm"></label>
     </div>
     <div class="hint" id="phyCapHint"></div>
   </div>
@@ -548,7 +554,7 @@ const DEFAULT_STATE = {
       supportCategory: 'Capacity Building – Improved Daily Living',
       rates: { direct: 183.99, nf2f: 183.99, cancellation: 183.99, travel: 92.00, km: 0.99 },
       lineItems: { direct: '15_055_0128_1_3', nf2f: '15_055_0128_1_3_NF',
-                   cancellation: '15_055_0128_1_3_CA', travel: '15_055_0128_1_3_PT',
+                   cancellation: '15_055_0128_1_3_CA', travel: '15_055_0128_1_3',
                    km: '15_799_0128_1_3' }
     }
   },
@@ -582,6 +588,8 @@ function loadState() {
     rates: Object.assign({}, d.settings.physio.rates, sp.rates || {}),
     lineItems: Object.assign({}, d.settings.physio.lineItems, sp.lineItems || {})
   };
+  // v2 first release defaulted travel time to the _PT code; travel is claimed on the primary item + "Provider Travel" claim type
+  if (physio.lineItems.travel === '15_055_0128_1_3_PT') physio.lineItems.travel = d.settings.physio.lineItems.travel;
   return {
     settings: Object.assign(d.settings, s, {
       rates: rates,
@@ -1030,13 +1038,14 @@ function sessionLines(session, client, settings) {
 const PHYSIO_CAPS = { direct: 183.99, nf2f: 183.99, cancellation: 183.99, travel: 92.00, km: 0.99 };
 const PHYSIO_MAX_TRAVEL_MIN = 30; // per direction, MMM1-3
 const PHYSIO_CLAIM_LABEL = { direct: 'Direct', nf2f: 'NF2F', cancellation: 'Cancellation',
-  travel: 'Travel', km: 'Travel' };
+  travel: 'Provider Travel (_PT)', km: 'Non-labour travel', parking: 'Non-labour travel' };
 const PHYSIO_ITEM_NAME = {
   direct: 'Therapy - Physiotherapist - Direct Service',
   nf2f: 'Therapy - Physiotherapist - Non-Face-to-Face',
   cancellation: 'Therapy - Physiotherapist - Cancellation',
   travel: 'Therapy - Physiotherapist - Provider Travel',
-  km: 'Provider travel - non-labour costs'
+  km: 'Provider travel - non-labour costs',
+  parking: 'Provider travel - non-labour costs'
 };
 const isPhysio = session => !!session && session.kind === 'physio';
 const physioClaimOf = session =>
@@ -1059,34 +1068,49 @@ function physioSessionErrors(session) {
   const out = Number(session.travelOutMin) || 0, ret = Number(session.travelReturnMin) || 0;
   if (out < 0 || ret < 0) errs.push('travel 时间不能是负数');
   if (out > PHYSIO_MAX_TRAVEL_MIN || ret > PHYSIO_MAX_TRAVEL_MIN) errs.push('travel 时间每程最多 30 分钟');
-  if (physioClaimOf(session) !== 'direct' && (out > 0 || ret > 0 || Number(session.km) > 0))
-    errs.push('只有 Direct service 可以收 travel 时间和 km');
+  const pk = Number(session.parkingTolls) || 0;
+  if (pk < 0) errs.push('停车／过路费不能是负数');
+  if (physioClaimOf(session) !== 'direct' && (out > 0 || ret > 0 || Number(session.km) > 0 || pk > 0))
+    errs.push('只有 Direct service 可以收 travel 时间、km 和停车／过路费');
   return errs;
 }
 
-// Same line shape as sessionLines + startTime/endTime/claimType/gst
+// Same line shape as sessionLines + startTime/endTime/claimType/gst/rateKind.
+// Travel time: own rate (rates.travel, capped $92/h) and amount from EXACT minutes (25 min x $92 = $38.33);
+// qty is the hours shown on the invoice. Non-labour: km x $/km, parking/tolls at actual cost (qty 1).
 function physioLines(session, settings) {
   const ph = (settings.physio || DEFAULT_STATE.settings.physio);
   const r = ph.rates, li = ph.lineItems;
   const claim = physioClaimOf(session);
   const start = toMin(session.startTime), end = toMin(session.endTime);
   const lines = [];
-  function push(kind, desc, s, e, qty, unit) {
+  function push(kind, desc, s, e, qty, unit, amount, rateOverride) {
     if (!(qty > 0)) return;
-    const rate = Number(r[kind]);
+    const rate = rateOverride != null ? rateOverride : Number(r[kind]);
+    const itemKind = kind === 'parking' ? 'km' : kind;
     lines.push({ serviceDate: session.date, startTime: s, endTime: e, description: desc,
-      lineItem: li[kind], claimType: PHYSIO_CLAIM_LABEL[kind], qty: qty, unit: unit,
-      rate: rate, gst: 0, amount: round2(qty * rate) });
+      lineItem: li[itemKind], claimType: PHYSIO_CLAIM_LABEL[kind], rateKind: kind, qty: qty, unit: unit,
+      rate: rate, gst: 0, amount: amount != null ? amount : round2(qty * rate) });
+  }
+  function travelLine(label, minutes, s, e) {
+    if (!(minutes > 0)) return;
+    const rate = Number(r.travel); // never the direct-service rate
+    push('travel', PHYSIO_ITEM_NAME.travel + ' (' + label + ', ' + minutes + ' min)', s, e,
+      round2(minutes / 60), 'h', round2(minutes / 60 * rate), rate);
   }
   const content = (session.physioDescription || '').trim();
   const mainDesc = PHYSIO_ITEM_NAME[claim] + (content ? ': ' + content : '');
   const out = claim === 'direct' ? Math.min(Number(session.travelOutMin) || 0, PHYSIO_MAX_TRAVEL_MIN) : 0;
   const ret = claim === 'direct' ? Math.min(Number(session.travelReturnMin) || 0, PHYSIO_MAX_TRAVEL_MIN) : 0;
-  push('travel', PHYSIO_ITEM_NAME.travel + ' (to participant)', minToTime(start - out), session.startTime, round2(out / 60), 'h');
+  travelLine('to participant', out, minToTime(start - out), session.startTime);
   push(claim, mainDesc, session.startTime, session.endTime, round2((end - start) / 60), 'h');
-  push('travel', PHYSIO_ITEM_NAME.travel + ' (return)', session.endTime, minToTime(end + ret), round2(ret / 60), 'h');
+  travelLine('return', ret, session.endTime, minToTime(end + ret));
   const km = claim === 'direct' ? (Number(session.km) || 0) : 0;
   push('km', PHYSIO_ITEM_NAME.km + ' (' + round2(km) + ' km)', '', '', round2(km), 'km');
+  const pk = claim === 'direct' ? round2(Number(session.parkingTolls) || 0) : 0;
+  push('parking', PHYSIO_ITEM_NAME.parking + ': parking/tolls (actual cost' +
+    ((session.parkingTollsNote || '').trim() ? ', ' + session.parkingTollsNote.trim() : '') + ')',
+    '', '', pk > 0 ? 1 : 0, 'each', pk, pk);
   return lines;
 }
 
@@ -1495,6 +1519,7 @@ function clearSessionForm() {
   $('sessNF2F').checked = false;
   $('sessClaimType').value = 'direct'; $('sessPhysioDesc').value = '';
   $('sessTravelOut').value = ''; $('sessTravelRet').value = '';
+  $('sessParking').value = ''; $('sessParkingNote').value = '';
   syncSessKmVisibility();
   syncSupportHint();
   syncSessKind();
@@ -1515,8 +1540,10 @@ $('sessSaveBtn').addEventListener('click', () => {
     const pdata = { clientId: clientId, date: date, startTime: start, endTime: end, kind: 'physio',
       claimType: claimType, physioDescription: $('sessPhysioDesc').value.trim(),
       travelOutMin: direct ? numOr0('sessTravelOut') : 0, travelReturnMin: direct ? numOr0('sessTravelRet') : 0,
-      km: direct ? numOr0('sessKm') : 0, isPublicHoliday: false, isNonFaceToFace: claimType === 'nf2f' };
-    if ([pdata.travelOutMin, pdata.travelReturnMin, pdata.km].some(v => isNaN(v) || v < 0)) { alert('travel 时间或公里数不对。'); return; }
+      km: direct ? numOr0('sessKm') : 0,
+      parkingTolls: direct ? numOr0('sessParking') : 0, parkingTollsNote: direct ? $('sessParkingNote').value.trim() : '',
+      isPublicHoliday: false, isNonFaceToFace: claimType === 'nf2f' };
+    if ([pdata.travelOutMin, pdata.travelReturnMin, pdata.km, pdata.parkingTolls].some(v => isNaN(v) || v < 0)) { alert('travel 时间、公里数或停车／过路费不对。'); return; }
     const perrs = physioSessionErrors(pdata);
     if (perrs.length) { alert(perrs.join('\n')); return; }
     if (editingSessionId) {
@@ -1536,7 +1563,7 @@ $('sessSaveBtn').addEventListener('click', () => {
                  supportType: supportType };
   if (editingSessionId) {
     const ex = state.sessions.find(s => s.id === editingSessionId);
-    if (ex && ex.kind) { delete ex.kind; delete ex.claimType; delete ex.physioDescription; delete ex.travelOutMin; delete ex.travelReturnMin; }
+    if (ex && ex.kind) { delete ex.kind; delete ex.claimType; delete ex.physioDescription; delete ex.travelOutMin; delete ex.travelReturnMin; delete ex.parkingTolls; delete ex.parkingTollsNote; }
     Object.assign(state.sessions.find(s => s.id === editingSessionId), data);
   } else {
     state.sessions.push(Object.assign({ id: uid(), invoiceId: null }, data));
@@ -1547,7 +1574,7 @@ $('sessCancelBtn').addEventListener('click', () => { clearSessionForm(); });
 
 function describeLines(session, client) {
   return sessionLines(session, client, state.settings)
-    .map(l => l.qty + (l.unit === 'h' ? ' h' : ' km') + ' × ' + money(l.rate) + ' = ' + money(l.amount))
+    .map(l => l.qty + (l.unit === 'h' ? ' h' : l.unit === 'each' ? ' each' : ' km') + ' × ' + money(l.rate) + ' = ' + money(l.amount))
     .join('<br>');
 }
 
@@ -1586,6 +1613,7 @@ $('sessList').addEventListener('click', e => {
     $('sessClaimType').value = isPhysio(s) ? physioClaimOf(s) : 'direct';
     $('sessPhysioDesc').value = s.physioDescription || '';
     $('sessTravelOut').value = s.travelOutMin || ''; $('sessTravelRet').value = s.travelReturnMin || '';
+    $('sessParking').value = s.parkingTolls || ''; $('sessParkingNote').value = s.parkingTollsNote || '';
     syncSessKmVisibility();
     syncSupportHint();
     syncSessKind();
@@ -1689,9 +1717,8 @@ function generatePhysioInvoice(client, ids, invoiceDate, dueDate) {
   let lines = [];
   for (const s of sessions) lines = lines.concat(physioLines(s, st));
   for (const l of lines) {
-    const kind = Object.keys(st.physio.lineItems).find(k => st.physio.lineItems[k] === l.lineItem);
-    const cap = kind ? PHYSIO_CAPS[kind] : null;
-    if (cap != null && l.rate > cap + 1e-9) errs.push(l.lineItem + ' 单价 ' + money(l.rate) + ' 超过 NDIS 上限 ' + money(cap));
+    const cap = PHYSIO_CAPS[l.rateKind]; // parking/tolls: actual cost, no cap
+    if (cap != null && l.rate > cap + 1e-9) errs.push(l.lineItem + ' ' + l.claimType + ' 单价 ' + money(l.rate) + ' 超过 NDIS 上限 ' + money(cap));
   }
   findOverlaps(sessions).forEach(m => errs.push('时间重叠：' + m));
   if (errs.length) { alert('不能生成 invoice：\n' + Array.from(new Set(errs)).join('\n')); return null; }
@@ -1732,7 +1759,7 @@ function physioInvoiceHtml(inv) {
     rows += '<tr><td class="item">' + esc(l.lineItem) + '</td><td class="nw">' + fmtDate(l.serviceDate) + '</td>' +
       '<td class="nw">' + time + '</td><td>' + esc(l.description) + '</td>' +
       '<td>' + esc(l.claimType) + '</td>' +
-      '<td class="num">' + l.qty.toFixed(l.unit === 'km' ? 1 : 2) + (l.unit === 'km' ? ' km' : '') + '</td>' +
+      '<td class="num">' + (l.unit === 'each' ? '1 each' : l.qty.toFixed(l.unit === 'km' ? 1 : 2) + (l.unit === 'km' ? ' km' : '')) + '</td>' +
       '<td class="num">' + money(l.rate) + '</td>' +
       '<td class="num">GST free</td>' +
       '<td class="num">' + money(l.amount) + '</td></tr>';
@@ -2198,7 +2225,7 @@ function renderSettings() {
   $('setPhyCategory').value = st.physio.supportCategory;
   PHY_RATE_FIELDS.forEach(([id, key]) => $(id).value = st.physio.rates[key]);
   PHY_LI_FIELDS.forEach(([id, key]) => $(id).value = st.physio.lineItems[key] || '');
-  $('phyCapHint').textContent = 'NDIS 2026–27 National 上限：Direct / NF2F / Cancellation $183.99/h，Travel 时间 $92.00/h（每程最多 30 分钟），km $0.99。超过上限不能保存、不能生成 invoice。';
+  $('phyCapHint').textContent = 'NDIS 2026–27 National 上限：Direct / NF2F / Cancellation $183.99/h，Travel 时间 $92.00/h（每程最多 30 分钟，按实际分钟算），km $0.99，停车／过路费按实际金额。超过上限不能保存、不能生成 invoice。';
   SETTING_FIELDS.forEach(([id, key]) => $(id).value = st[key]);
   RATE_FIELDS.forEach(([id, key]) => $(id).value = st.rates[key]);
   $('setSvcCommunity').value = st.supportServiceNames.community;

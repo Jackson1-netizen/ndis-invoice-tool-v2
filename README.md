@@ -12,8 +12,12 @@ Copied from [Jackson1-netizen/ndis-invoice-tool](https://github.com/Jackson1-net
 - **Physiotherapy** (NDIS Pricing Schedule 2026-27, National):
   - Bill To is the plan manager (name, optional address, email). The participant name, NDIS number and address are shown beside it.
   - `For: Capacity Building – Improved Daily Living`
-  - Direct `15_055_0128_1_3` $183.99/h · NF2F `_NF` · Cancellation `_CA` · Travel time `_PT` $92.00/h, max 30 min each way ·
-    km `15_799_0128_1_3` $0.99/km. Travel time and km can only be claimed on Direct service.
+  - Direct `15_055_0128_1_3` $183.99/h · NF2F `_NF` · Cancellation `_CA`.
+  - Provider travel time goes on its own lines (to the participant / return). It uses the same item `15_055_0128_1_3` with the claim type
+    "Provider Travel (_PT)" (PAPL 2025-26 p.23), its own rate capped at $92.00/h, and a maximum of 30 min each way. The amount is
+    worked out from the exact minutes (25 min × $92/h = $38.33). Qty shows hours.
+  - Non-labour travel uses `15_799_0128_1_3` (Provider travel - non-labour costs): km at $0.99/km, plus a parking/tolls line
+    at actual cost (1 each, GST free) (PAPL 2025-26 p.23-24). Travel time, km and parking/tolls can only be claimed on Direct service.
   - Each line shows the item number, service date, start–end time, description, claim type, qty, unit price, GST free and amount.
   - Totals are Subtotal, Total GST, Invoice total, Payments and Amount Due, followed by "No GST charged: supplier not registered for GST."
   - The invoice uses the same `INV-` number sequence as support work. The title is always `INVOICE`. No AHPRA number is printed.

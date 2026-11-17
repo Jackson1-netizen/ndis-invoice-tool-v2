@@ -15,7 +15,7 @@ const ORIGIN = 'http://ndis-tool.test';
   ledger.sessions = [
     { id: 'e1', invoiceId: null, clientId: 'exc1', kind: 'physio', claimType: 'direct', date: '2026-11-16',
       startTime: '10:00', endTime: '11:00', physioDescription: 'EXAMPLE Initial assessment',
-      travelOutMin: 25, travelReturnMin: 20, km: 12.4, isPublicHoliday: false, isNonFaceToFace: false },
+      travelOutMin: 25, travelReturnMin: 20, km: 12.4, parkingTolls: 8.5, parkingTollsNote: 'EXAMPLE car park', isPublicHoliday: false, isNonFaceToFace: false },
     { id: 'e2', invoiceId: null, clientId: 'exc1', kind: 'physio', claimType: 'nf2f', date: '2026-11-17',
       startTime: '14:00', endTime: '14:30', physioDescription: 'EXAMPLE Report writing',
       travelOutMin: 0, travelReturnMin: 0, km: 0, isPublicHoliday: false, isNonFaceToFace: true },

@@ -189,10 +189,11 @@ async function printPdf(page, file) {
       $('sessClaimType').value = 'direct'; $('sessClaimType').dispatchEvent(new Event('change'));
       $('sessPhysioDesc').value = 'EXAMPLE Initial assessment';
       $('sessTravelOut').value = '25'; $('sessTravelRet').value = '20'; $('sessKm').value = '12.4';
+      $('sessParking').value = '8.50'; $('sessParkingNote').value = 'EXAMPLE car park';
       $('sessSaveBtn').click();
     });
     const saved = await page.evaluate(() => state.sessions.filter(s => s.kind === 'physio'));
-    check('physio: session saved via form', saved.length === 1 && saved[0].claimType === 'direct' && saved[0].travelOutMin === 25, saved);
+    check('physio: session saved via form', saved.length === 1 && saved[0].claimType === 'direct' && saved[0].travelOutMin === 25 && saved[0].parkingTolls === 8.5, saved);
     // travel > 30 min blocked at save
     const n0 = dialogs.length;
     await page.evaluate(() => {
@@ -233,16 +234,17 @@ async function printPdf(page, file) {
     check('physio: invoiceType=physio', inv.invoiceType === 'physio');
     const L = inv.lines.map(l => [l.lineItem, l.claimType, l.startTime, l.endTime, l.qty, l.unit, l.rate, l.gst, l.amount]);
     const expect = [
-      ['15_055_0128_1_3_PT', 'Travel', '09:35', '10:00', 0.42, 'h', 92, 0, 38.64],
+      ['15_055_0128_1_3', 'Provider Travel (_PT)', '09:35', '10:00', 0.42, 'h', 92, 0, 38.33],
       ['15_055_0128_1_3', 'Direct', '10:00', '11:00', 1, 'h', 183.99, 0, 183.99],
-      ['15_055_0128_1_3_PT', 'Travel', '11:00', '11:20', 0.33, 'h', 92, 0, 30.36],
-      ['15_799_0128_1_3', 'Travel', '', '', 12.4, 'km', 0.99, 0, 12.28],
+      ['15_055_0128_1_3', 'Provider Travel (_PT)', '11:00', '11:20', 0.33, 'h', 92, 0, 30.67],
+      ['15_799_0128_1_3', 'Non-labour travel', '', '', 12.4, 'km', 0.99, 0, 12.28],
+      ['15_799_0128_1_3', 'Non-labour travel', '', '', 1, 'each', 8.5, 0, 8.5],
       ['15_055_0128_1_3_NF', 'NF2F', '14:00', '14:30', 0.5, 'h', 183.99, 0, 92],
       ['15_055_0128_1_3_CA', 'Cancellation', '09:00', '10:00', 1, 'h', 183.99, 0, 183.99]
     ];
     check('physio: line items / qty / rates / amounts', JSON.stringify(L) === JSON.stringify(expect), L);
     check('physio: subtotal, GST, total, payments, amount due',
-      inv.subtotal === 541.26 && inv.gst === 0 && inv.total === 541.26 && inv.payments === 50 && inv.amountDue === 491.26,
+      inv.subtotal === 549.76 && inv.gst === 0 && inv.total === 549.76 && inv.payments === 50 && inv.amountDue === 499.76,
       [inv.subtotal, inv.gst, inv.total, inv.payments, inv.amountDue]);
     check('physio: Bill To is plan manager', /BILL TO:\s*EXAMPLE Plan Managers/.test(physio.sheetText), physio.sheetText.slice(0, 600));
     check('physio: For: Capacity Building – Improved Daily Living', physio.sheetText.includes('For: Capacity Building – Improved Daily Living'));
@@ -252,6 +254,10 @@ async function printPdf(page, file) {
     check('title: physio title is exactly INVOICE', physio.title === 'INVOICE');
     check('title: no "TAX INVOICE" anywhere in app source', !/tax\s*invoice/i.test(V2_HTML));
     check('physio: no AHPRA printed', !/AHPRA/i.test(physio.sheetHtml));
+    check('travel: 25 min at $92/h = $38.33 (exact minutes, not 0.42 h x $92 = $38.64)', inv.lines[0].amount === 38.33, inv.lines[0]);
+    check('travel: parking/tolls line on 15_799_0128_1_3 at actual cost, GST free',
+      inv.lines[4].lineItem === '15_799_0128_1_3' && inv.lines[4].amount === 8.5 && inv.lines[4].gst === 0 && /parking\/tolls/.test(inv.lines[4].description), inv.lines[4]);
+    check('travel: sheet prints parking/tolls line', /parking\/tolls/.test(physio.sheetText));
     // keep the rendered physio sheet for review
     await sheetPng(page, path.join(OUT, 'physio-test-sheet.png'));
 
@@ -284,6 +290,60 @@ async function printPdf(page, file) {
       check('cap: invoice generation blocked when ' + k + ' rate = ' + v, r && /上限/.test(dialogs[dialogs.length - 1]), dialogs.slice(-1));
     }
     // at the cap is allowed (already proven by the 183.99 / 92 / 0.99 invoice above)
+
+    /* ---------- 4b. travel rules ---------- */
+    const tr = await page.evaluate(() => {
+      const st = state.settings, out = {};
+      const mk = (o) => Object.assign({ id: 'x', clientId: state.clients[0].id, kind: 'physio', claimType: 'direct', date: '2026-12-10',
+        startTime: '10:00', endTime: '11:00', travelOutMin: 0, travelReturnMin: 0, km: 0, parkingTolls: 0 }, o);
+      // travel uses rates.travel, never the direct rate
+      const old = st.physio.rates.travel; st.physio.rates.travel = 80;
+      const l1 = physioLines(mk({ travelOutMin: 30, travelReturnMin: 30 }), st);
+      out.travelRates = l1.filter(l => l.rateKind === 'travel').map(l => [l.rate, l.amount]);
+      st.physio.rates.travel = old;
+      // exactly 30 min each way is allowed: 2 x $46.00
+      out.at30 = physioLines(mk({ travelOutMin: 30, travelReturnMin: 30 }), st).filter(l => l.rateKind === 'travel').map(l => l.amount);
+      out.err31 = physioSessionErrors(mk({ travelOutMin: 31 }));
+      out.err30 = physioSessionErrors(mk({ travelOutMin: 30, travelReturnMin: 30 }));
+      out.parkingNf2f = physioSessionErrors(mk({ claimType: 'nf2f', parkingTolls: 5 }));
+      out.parkingNeg = physioSessionErrors(mk({ parkingTolls: -1 }));
+      out.migrated = (function () { const raw = JSON.parse(localStorage.getItem(STORAGE_KEY));
+        raw.settings.physio.lineItems.travel = '15_055_0128_1_3_PT'; localStorage.setItem(STORAGE_KEY, JSON.stringify(raw));
+        return loadState().settings.physio.lineItems.travel; })();
+      return out;
+    });
+    check('travel: uses the travel rate ($80 set), never $183.99', JSON.stringify(tr.travelRates) === '[[80,40],[80,40]]', tr.travelRates);
+    check('travel: exactly 30 min each way allowed ($46.00 each)', JSON.stringify(tr.at30) === '[46,46]' && tr.err30.length === 0, tr);
+    check('travel: 31 min one way is an error', tr.err31.length === 1 && /30/.test(tr.err31[0]), tr.err31);
+    check('parking: not allowed on NF2F; negative rejected', tr.parkingNf2f.length === 1 && tr.parkingNeg.length === 1, tr);
+    check('travel: old _PT default migrated to 15_055_0128_1_3', tr.migrated === '15_055_0128_1_3', tr.migrated);
+    // travel at the direct rate ($183.99) must be blocked at generation; 31 min injected session also blocked
+    for (const [label, setup] of [['travel rate $183.99', 'rate'], ['31 min travel (bypassing the form)', 'min31']]) {
+      const blocked = await page.evaluate(setup => {
+        const cid = state.clients[0].id, st = state.settings, old = st.physio.rates.travel;
+        if (setup === 'rate') st.physio.rates.travel = 183.99;
+        state.sessions.push({ id: 'tb', invoiceId: null, clientId: cid, kind: 'physio', claimType: 'direct', date: '2026-12-11',
+          startTime: '10:00', endTime: '11:00', travelOutMin: setup === 'min31' ? 31 : 20, travelReturnMin: 0, km: 0, parkingTolls: 0 });
+        const n = state.invoices.length;
+        $('invKind').value = 'physio'; $('invKind').dispatchEvent(new Event('change'));
+        $('invClient').value = cid; renderInvoicePick(); $('invGenBtn').click();
+        st.physio.rates.travel = old; state.sessions = state.sessions.filter(s => s.id !== 'tb');
+        return state.invoices.length === n;
+      }, setup);
+      check('travel: generation blocked for ' + label, blocked, dialogs.slice(-1));
+    }
+    // parking above $0.99 (actual cost) is NOT blocked by the km cap
+    const pkOk = await page.evaluate(() => {
+      const cid = state.clients[0].id;
+      state.sessions.push({ id: 'pk', invoiceId: null, clientId: cid, kind: 'physio', claimType: 'direct', date: '2026-12-12',
+        startTime: '10:00', endTime: '11:00', travelOutMin: 10, travelReturnMin: 0, km: 5, parkingTolls: 22.4 });
+      const n = state.invoices.length;
+      $('invKind').value = 'physio'; $('invKind').dispatchEvent(new Event('change'));
+      $('invClient').value = cid; renderInvoicePick(); $('invGenBtn').click();
+      const inv = state.invoices[state.invoices.length - 1];
+      return state.invoices.length === n + 1 ? inv.lines.find(l => l.rateKind === 'parking').amount : null;
+    });
+    check('parking: $22.40 actual cost allowed (not capped at $0.99)', pkOk === 22.4, pkOk);
 
     /* ---------- 5. overlap blocking ---------- */
     const ov = await page.evaluate(() => {
