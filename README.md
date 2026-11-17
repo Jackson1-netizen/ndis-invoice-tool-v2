@@ -15,7 +15,7 @@ Copied from [Jackson1-netizen/ndis-invoice-tool](https://github.com/Jackson1-net
   - Direct `15_055_0128_1_3` $183.99/h · NF2F `_NF` · Cancellation `_CA`.
   - Provider travel time goes on its own lines (to the participant / return). It uses the same item `15_055_0128_1_3` with the claim type
     "Provider Travel (_PT)" (PAPL 2025-26 p.23), its own rate capped at $92.00/h, and a maximum of 30 min each way. The amount is
-    worked out from the exact minutes (25 min × $92/h = $38.33). Qty is printed with enough decimals (4–6) that qty × unit price, rounded to the cent, equals the amount (25 min → 0.41667 h).
+    worked out like v1: qty = minutes/60 rounded half-up to 0.01 h, amount = qty × rate rounded to the cent (25 min = 0.42 h × $92 = $38.64).
   - Non-labour travel uses `15_799_0128_1_3` (Provider travel - non-labour costs): km at $0.99/km, plus a parking/tolls line
     at actual cost (1 each, GST free) (PAPL 2025-26 p.23-24). Travel time, km and parking/tolls can only be claimed on Direct service.
   - Each line shows the item number, service date, start–end time, description, claim type, qty, unit price, GST free and amount.

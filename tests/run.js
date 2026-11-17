@@ -234,9 +234,9 @@ async function printPdf(page, file) {
     check('physio: invoiceType=physio', inv.invoiceType === 'physio');
     const L = inv.lines.map(l => [l.lineItem, l.claimType, l.startTime, l.endTime, l.qty, l.unit, l.rate, l.gst, l.amount]);
     const expect = [
-      ['15_055_0128_1_3', 'Provider Travel (_PT)', '09:35', '10:00', 0.41667, 'h', 92, 0, 38.33],
+      ['15_055_0128_1_3', 'Provider Travel (_PT)', '09:35', '10:00', 0.42, 'h', 92, 0, 38.64],
       ['15_055_0128_1_3', 'Direct', '10:00', '11:00', 1, 'h', 183.99, 0, 183.99],
-      ['15_055_0128_1_3', 'Provider Travel (_PT)', '11:00', '11:20', 0.33333, 'h', 92, 0, 30.67],
+      ['15_055_0128_1_3', 'Provider Travel (_PT)', '11:00', '11:20', 0.33, 'h', 92, 0, 30.36],
       ['15_799_0128_1_3', 'Non-labour travel', '', '', 12.4, 'km', 0.99, 0, 12.28],
       ['15_799_0128_1_3', 'Non-labour travel', '', '', 1, 'each', 8.5, 0, 8.5],
       ['15_055_0128_1_3_NF', 'NF2F', '14:00', '14:30', 0.5, 'h', 183.99, 0, 92],
@@ -254,7 +254,7 @@ async function printPdf(page, file) {
     check('title: physio title is exactly INVOICE', physio.title === 'INVOICE');
     check('title: no "TAX INVOICE" anywhere in app source', !/tax\s*invoice/i.test(V2_HTML));
     check('physio: no AHPRA printed', !/AHPRA/i.test(physio.sheetHtml));
-    check('travel: 25 min at $92/h = $38.33 (exact minutes, not 0.42 h x $92 = $38.64)', inv.lines[0].amount === 38.33, inv.lines[0]);
+    check('travel: 25 min at $92/h = 0.42 h x $92 = $38.64 (qty rounded to 0.01 h first, like v1)', inv.lines[0].qty === 0.42 && inv.lines[0].amount === 38.64, inv.lines[0]);
     check('travel: parking/tolls line on 15_799_0128_1_3 at actual cost, GST free',
       inv.lines[4].lineItem === '15_799_0128_1_3' && inv.lines[4].amount === 8.5 && inv.lines[4].gst === 0 && /parking\/tolls/.test(inv.lines[4].description), inv.lines[4]);
     check('travel: sheet prints parking/tolls line', /parking\/tolls/.test(physio.sheetText));
@@ -291,7 +291,7 @@ async function printPdf(page, file) {
     }
     // at the cap is allowed (already proven by the 183.99 / 92 / 0.99 invoice above)
 
-    /* ---------- 4a. travel qty reconciles: displayed qty x unit price (to the cent) == amount ---------- */
+    /* ---------- 4a. travel qty (2 dp, half-up) reconciles: printed qty x unit price (to the cent) == printed amount ---------- */
     // Independent check in exact decimal arithmetic (BigInt) from the strings printed on the invoice.
     const centsFromPrinted = (qtyStr, rateCents) => {
       const [ip, fp = ''] = qtyStr.split('.'); const f = 10n ** BigInt(fp.length);
@@ -314,15 +314,16 @@ async function printPdf(page, file) {
     for (const x of rec) {
       const rateCents = Math.round(Number(x.priceStr.replace(/[$,]/g, '')) * 100);
       const amountCents = Math.round(Number(x.amountStr.replace(/[$,]/g, '')) * 100);
-      const expectCents = Number((2n * BigInt(x.m) * BigInt(Math.round(x.rate * 100)) + 60n) / 120n); // minutes/60 x rate
-      if (centsFromPrinted(x.qtyStr, rateCents) !== amountCents || amountCents !== expectCents) recFail.push(x);
+      const qtyHundredths = Math.floor((2 * x.m * 100 + 60) / 120); // minutes/60 rounded half-up to 0.01 h
+      const twoDp = /^\d+\.\d{2}$/.test(x.qtyStr) && Math.round(Number(x.qtyStr) * 100) === qtyHundredths;
+      if (!twoDp || centsFromPrinted(x.qtyStr, rateCents) !== amountCents) recFail.push(x);
     }
     const at92 = rec.filter(x => x.rate === 92);
-    check('reconcile: every minute 1-30 at $92/h: printed qty x price = printed amount = minutes/60 x $92',
+    check('reconcile: every minute 1-30 at $92/h prints qty to 2 dp (half-up) and qty x price = amount',
       at92.length === 30 && !recFail.some(x => x.rate === 92), recFail.filter(x => x.rate === 92));
     check('reconcile: also at $91.50, $80, $75.25, $50 (1-30 min)', recFail.length === 0, recFail);
-    check('reconcile: 25 min at $92 prints 0.41667 / $92.00 / $38.33',
-      JSON.stringify(at92[24]) === JSON.stringify({ m: 25, rate: 92, qtyStr: '0.41667', priceStr: '$92.00', amountStr: '$38.33', amount: 38.33 }), at92[24]);
+    check('reconcile: 25 min at $92 prints 0.42 / $92.00 / $38.64',
+      JSON.stringify(at92[24]) === JSON.stringify({ m: 25, rate: 92, qtyStr: '0.42', priceStr: '$92.00', amountStr: '$38.64', amount: 38.64 }), at92[24]);
 
     /* ---------- 4b. travel rules ---------- */
     const tr = await page.evaluate(() => {
