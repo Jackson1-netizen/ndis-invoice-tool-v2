@@ -224,6 +224,7 @@ async function printPdf(page, file) {
       $('sessPhysioDesc').value = 'EXAMPLE Initial assessment';
       $('sessTravelOut').value = '25'; $('sessTravelRet').value = '20'; $('sessKm').value = '12.4';
       $('sessParking').value = '8.50'; $('sessParkingNote').value = 'EXAMPLE car park';
+      $('sessReportAdd').checked = false;
       $('sessSaveBtn').click();
     });
     const saved = await page.evaluate(() => state.sessions.filter(s => s.kind === 'physio'));
@@ -413,6 +414,65 @@ async function printPdf(page, file) {
     });
     check('parking: $22.40 actual cost allowed (not capped at $0.99)', pkOk === 22.4, pkOk);
 
+    /* ---------- 4c. default NF2F report line on a new direct physio session ---------- */
+    const rp = await page.evaluate(() => {
+      const cid = state.clients[0].id, out = {};
+      clearSessionForm();
+      out.defaults = [$('sessReportAdd').checked, $('sessReportMin').value, $('sessReportDesc').value];
+      $('sessClient').value = cid;
+      $('sessKind').value = 'physio'; $('sessKind').dispatchEvent(new Event('change'));
+      $('sessDate').value = '2026-12-01'; $('sessDate').dispatchEvent(new Event('change'));
+      $('sessStart').value = '11:00'; $('sessEnd').value = '12:00';
+      $('sessClaimType').value = 'direct'; $('sessClaimType').dispatchEvent(new Event('change'));
+      $('sessTravelOut').value = '15'; $('sessTravelRet').value = '15'; $('sessKm').value = '20';
+      out.visible = $('sessReportAdd').closest('label').style.display !== 'none' && $('sessReportMin').closest('label').style.display !== 'none';
+      $('sessSaveBtn').click();
+      const day = state.sessions.filter(s => s.date === '2026-12-01' && s.kind === 'physio');
+      out.day = day.map(s => [s.claimType, s.startTime, s.endTime, s.physioDescription, s.travelOutMin, s.travelReturnMin, s.km]);
+      // edited report minutes (20) + text, NF2F claim type never auto-adds
+      clearSessionForm();
+      $('sessClient').value = cid;
+      $('sessKind').value = 'physio'; $('sessKind').dispatchEvent(new Event('change'));
+      $('sessDate').value = '2026-12-02'; $('sessDate').dispatchEvent(new Event('change'));
+      $('sessStart').value = '09:00'; $('sessEnd').value = '10:00';
+      $('sessReportMin').value = '20'; $('sessReportDesc').value = 'EXAMPLE progress report';
+      $('sessSaveBtn').click();
+      out.edited = state.sessions.filter(s => s.date === '2026-12-02').map(s => [s.claimType, s.startTime, s.endTime, s.physioDescription]);
+      clearSessionForm();
+      $('sessClient').value = cid;
+      $('sessKind').value = 'physio'; $('sessKind').dispatchEvent(new Event('change'));
+      $('sessDate').value = '2026-12-03'; $('sessDate').dispatchEvent(new Event('change'));
+      $('sessStart').value = '09:00'; $('sessEnd').value = '09:30';
+      $('sessClaimType').value = 'nf2f'; $('sessClaimType').dispatchEvent(new Event('change'));
+      $('sessSaveBtn').click();
+      out.nf2fOnly = state.sessions.filter(s => s.date === '2026-12-03').length;
+      // invoice from the 12-01 pair = the INV-0015 shape ($295.79)
+      const ids = state.sessions.filter(s => s.date === '2026-12-01').map(s => s.id);
+      $('invKind').value = 'physio'; $('invKind').dispatchEvent(new Event('change'));
+      $('invClient').value = cid; renderInvoicePick();
+      document.querySelectorAll('.pickSess').forEach(x => { x.checked = ids.includes(x.value); });
+      $('invPayments').value = ''; $('invGenBtn').click();
+      const inv = state.invoices[state.invoices.length - 1];
+      out.total = inv.total; out.lines = inv.lines.map(l => [l.lineItem, l.startTime, l.endTime, l.qty, l.amount]);
+      // editing an existing direct session does not add another report
+      const d = state.sessions.find(s => s.date === '2026-12-02' && s.claimType === 'direct');
+      renderAll(); document.querySelector('#sessList [data-edit="' + d.id + '"]').click();
+      out.editUnticked = !$('sessReportAdd').checked;
+      $('sessSaveBtn').click();
+      out.afterEdit = state.sessions.filter(s => s.date === '2026-12-02').length;
+      clearSessionForm();
+      state.sessions = state.sessions.filter(s => !['2026-12-02', '2026-12-03'].includes(s.date) || s.invoiceId); renderAll();
+      return out;
+    });
+    check('report: defaults ticked, 15 min, "Report writing"', JSON.stringify(rp.defaults) === '[true,"15","Report writing"]' && rp.visible, rp);
+    check('report: new direct 11:00-12:00 (+15 back) adds NF2F 12:15-12:30',
+      JSON.stringify(rp.day) === JSON.stringify([['direct', '11:00', '12:00', '', 15, 15, 20], ['nf2f', '12:15', '12:30', 'Report writing', 0, 0, 0]]), rp.day);
+    check('report: minutes/text editable (20 min, no travel -> 10:00-10:20)',
+      JSON.stringify(rp.edited) === JSON.stringify([['direct', '09:00', '10:00', ''], ['nf2f', '10:00', '10:20', 'EXAMPLE progress report']]), rp.edited);
+    check('report: NF2F claim type does not add another report', rp.nf2fOnly === 1, rp);
+    check('report: editing an existing session adds nothing', rp.editUnticked && rp.afterEdit === 2, rp);
+    check('report: invoice = 23.00 + 183.99 + 23.00 + 19.80 + 46.00 = $295.79', rp.total === 295.79, rp.lines);
+
     /* ---------- 5. overlap blocking (same category; cross-category same day is blocked earlier, see 6) ---------- */
     const ov = await page.evaluate(() => {
       const cid = state.clients[0].id;
@@ -453,6 +513,7 @@ async function printPdf(page, file) {
       out.aSaved = physioCount() !== p0; out.aForcedPopup = dlg[dlg.length - 1];
       // b) switching to a free date re-enables the button
       $('sessDate').value = '2026-11-26'; $('sessDate').dispatchEvent(new Event('change'));
+      $('sessReportAdd').checked = false;
       out.bEnabled = !$('sessSaveBtn').disabled && $('sessSameDayMsg').style.display === 'none';
       $('sessSaveBtn').click(); out.bSaved = physioCount() === p0 + 1;
       // c) support on a date that already has physio (2026-11-26) is blocked

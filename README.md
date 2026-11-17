@@ -53,3 +53,10 @@ python tools\check_same_day.py --client "<name or NDIS number>" --date 2026-11-1
 
 Defaults: v2 ledger `D:\Grokbot\NDIS Invoices\ledger\invoice-data-v2.json`, v1 ledger `%USERPROFILE%\.openjarvis\invoice-data.json`.
 Exit code 0 = OK, 2 = conflict, 1 = error.
+
+## Default NF2F report line (physio)
+
+When a new **Direct** physiotherapy session is saved, the app also adds a separate NF2F session
+(item `15_055_0128_1_3_NF`, default 15 min = 0.25 h × $183.99, "Report writing") starting right after the
+return travel. Minutes and text are editable on the form; untick 「同时加报告 NF2F」 to skip it. The report is a
+normal session, so it can be edited or deleted before invoicing. Editing an existing session never adds one.

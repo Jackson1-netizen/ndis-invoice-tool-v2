@@ -204,6 +204,15 @@
       <label class="field physio-only physio-travel">停车／过路费说明（可留空）
         <input id="sessParkingNote" placeholder="e.g. hospital car park">
       </label>
+      <label class="check physio-only physio-travel" style="align-self:end;">
+        <input type="checkbox" id="sessReportAdd" checked> 同时加报告 NF2F（_NF）
+      </label>
+      <label class="field physio-only physio-travel">报告时间（分钟，默认 15）
+        <input type="number" id="sessReportMin" min="1" max="240" step="1" value="15">
+      </label>
+      <label class="field physio-only physio-travel">报告内容
+        <input id="sessReportDesc" value="Report writing">
+      </label>
       <label class="check support-only" style="align-self:end;">
         <input type="checkbox" id="sessPH"> Public Holiday
         <span class="ph-name" id="phName"></span>
@@ -1586,6 +1595,7 @@ function clearSessionForm() {
   $('sessClaimType').value = 'direct'; $('sessPhysioDesc').value = '';
   $('sessTravelOut').value = ''; $('sessTravelRet').value = '';
   $('sessParking').value = ''; $('sessParkingNote').value = '';
+  $('sessReportAdd').checked = true; $('sessReportMin').value = '15'; $('sessReportDesc').value = 'Report writing';
   syncSessKmVisibility();
   syncSupportHint();
   syncSessKind();
@@ -1614,10 +1624,26 @@ $('sessSaveBtn').addEventListener('click', () => {
     if ([pdata.travelOutMin, pdata.travelReturnMin, pdata.km, pdata.parkingTolls].some(v => isNaN(v) || v < 0)) { alert('travel 时间、公里数或停车／过路费不对。'); return; }
     const perrs = physioSessionErrors(pdata);
     if (perrs.length) { alert(perrs.join('\n')); return; }
+    // New direct session: by default also add an editable NF2F report session (15 min, _NF) straight after
+    // the return travel. Untick 「同时加报告」 to skip it; it is a normal session and can be edited/deleted.
+    let report = null;
+    if (!editingSessionId && direct && $('sessReportAdd').checked) {
+      const rmin = Math.round(Number($('sessReportMin').value));
+      if (!(rmin > 0) || rmin > 240) { alert('报告时间（分钟）不对。'); return; }
+      const rs = toMin(end) + (pdata.travelReturnMin || 0), re = rs + rmin;
+      if (re > 24 * 60) { alert('报告会跨过午夜，请改时间或不勾「同时加报告」。'); return; }
+      report = { clientId: clientId, date: date, startTime: minToTime(rs), endTime: minToTime(re), kind: 'physio',
+        claimType: 'nf2f', physioDescription: $('sessReportDesc').value.trim() || 'Report writing',
+        travelOutMin: 0, travelReturnMin: 0, km: 0, parkingTolls: 0, parkingTollsNote: '',
+        isPublicHoliday: false, isNonFaceToFace: true };
+      const rerrs = physioSessionErrors(report);
+      if (rerrs.length) { alert(rerrs.join('\n')); return; }
+    }
     if (editingSessionId) {
       Object.assign(state.sessions.find(s => s.id === editingSessionId), pdata);
     } else {
       state.sessions.push(Object.assign({ id: uid(), invoiceId: null }, pdata));
+      if (report) state.sessions.push(Object.assign({ id: uid(), invoiceId: null }, report));
     }
     saveState(); clearSessionForm(); renderAll(); toast('Session 已保存');
     return;
@@ -1682,6 +1708,7 @@ $('sessList').addEventListener('click', e => {
     $('sessPhysioDesc').value = s.physioDescription || '';
     $('sessTravelOut').value = s.travelOutMin || ''; $('sessTravelRet').value = s.travelReturnMin || '';
     $('sessParking').value = s.parkingTolls || ''; $('sessParkingNote').value = s.parkingTollsNote || '';
+    $('sessReportAdd').checked = false; // editing never adds a second report line
     syncSessKmVisibility();
     syncSupportHint();
     syncSessKind();
