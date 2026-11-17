@@ -1,0 +1,1949 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NDIS Invoice 工具</title>
+<style>
+  :root {
+    --blue: #2563eb; --blue-dark: #1d4ed8; --bg: #f1f5f9; --card: #ffffff;
+    --text: #0f172a; --muted: #64748b; --border: #e2e8f0; --red: #dc2626;
+    --green: #16a34a;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: system-ui, "Segoe UI", "Microsoft YaHei", sans-serif;
+         background: var(--bg); color: var(--text); }
+  header.appbar { background: var(--card); border-bottom: 1px solid var(--border);
+    padding: 14px 24px; display: flex; align-items: center; gap: 24px; flex-wrap: wrap; }
+  header.appbar h1 { font-size: 18px; margin: 0; }
+  nav.tabs { display: flex; gap: 6px; flex-wrap: wrap; }
+  nav.tabs button { border: 1px solid var(--border); background: var(--card);
+    padding: 8px 18px; border-radius: 8px; cursor: pointer; font-size: 14px; }
+  nav.tabs button.active { background: var(--blue); border-color: var(--blue); color: #fff; }
+  main { max-width: 1000px; margin: 0 auto; padding: 20px; }
+  section.tab { display: none; }
+  section.tab.active { display: block; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+    padding: 20px; margin-bottom: 18px; }
+  .card h2 { margin: 0 0 14px; font-size: 16px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 12px; }
+  label.field { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
+  label.field input, label.field select { padding: 8px 10px; border: 1px solid var(--border);
+    border-radius: 8px; font-size: 14px; color: var(--text); background: #fff; }
+  label.check { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+  button.primary { background: var(--blue); color: #fff; border: none; padding: 10px 22px;
+    border-radius: 8px; font-size: 14px; cursor: pointer; }
+  button.primary:hover { background: var(--blue-dark); }
+  button.ghost { background: #fff; border: 1px solid var(--border); padding: 6px 14px;
+    border-radius: 8px; font-size: 13px; cursor: pointer; }
+  button.danger { background: #fff; border: 1px solid var(--red); color: var(--red);
+    padding: 6px 14px; border-radius: 8px; font-size: 13px; cursor: pointer; }
+  table.list { width: 100%; border-collapse: collapse; font-size: 14px; }
+  table.list th { text-align: left; color: var(--muted); font-weight: 600; font-size: 12px;
+    padding: 8px; border-bottom: 2px solid var(--border); }
+  table.list td { padding: 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  .muted { color: var(--muted); font-size: 13px; }
+  .hint { font-size: 12px; color: var(--muted); margin-top: 6px; }
+  .toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+    background: var(--text); color: #fff; padding: 10px 22px; border-radius: 8px;
+    font-size: 14px; opacity: 0; transition: opacity .3s; pointer-events: none; z-index: 50; }
+  .toast.show { opacity: 1; }
+  .ph-name { color: var(--green); font-size: 12px; }
+  .voided { opacity: .45; text-decoration: line-through; }
+  .total-cell { font-weight: 600; white-space: nowrap; }
+  .stats-nav { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 14px; }
+  .stats-nav .week-label { font-size: 15px; font-weight: 600; min-width: 180px; text-align: center; }
+  .stats-metric { padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; }
+  .stats-metric .lbl { font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+  .stats-metric .val { font-size: 18px; font-weight: 600; }
+  .stats-metric.total { border-color: var(--blue); background: #eff6ff; }
+  .ledger-banner { font-size: 13px; padding: 8px 24px; border-bottom: 1px solid var(--border); display:flex; align-items:center; flex-wrap:wrap; gap:8px; }
+  .ledger-banner.on { background: #ecfdf5; color: #166534; }
+  .ledger-banner.off { background: #fff7ed; color: #9a3412; }
+  table.list tr.stats-week-row { cursor: pointer; }
+  table.list tr.stats-week-row.selected td { background: #eff6ff; }
+  .stats-charts { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 4px; }
+  @media (max-width: 900px) { .stats-charts { grid-template-columns: 1fr; } }
+  .chart-card { border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px 10px; background: #fafbfc; }
+  .chart-card h3 { margin: 0 0 12px; font-size: 14px; font-weight: 600; }
+  .bar-chart { display: flex; align-items: flex-end; gap: 6px; height: 140px; padding-top: 8px; }
+  .bar-col { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; height: 100%; justify-content: flex-end; }
+  .bar-col .bar { width: 100%; max-width: 36px; border-radius: 6px 6px 2px 2px; min-height: 2px; transition: height .2s; }
+  .bar-col .bar-val { font-size: 10px; color: var(--muted); margin-bottom: 4px; white-space: nowrap; }
+  .bar-col .bar-lbl { font-size: 10px; color: var(--muted); margin-top: 6px; text-align: center; line-height: 1.2; word-break: break-all; }
+  .bar-week { background: linear-gradient(180deg, #3b82f6, #1d4ed8); }
+  .bar-month { background: linear-gradient(180deg, #10b981, #047857); }
+  .bar-hours { background: linear-gradient(180deg, #f59e0b, #d97706); }
+  .month-total-row td { font-weight: 600; }
+  .month-total-row .pay { color: #047857; }
+
+  /* ------- invoice sheet (screen preview + print) ------- */
+  .sheet-wrap { background: #d7dde5; padding: 24px; border-radius: 12px; overflow-x: auto; }
+  .invoice-sheet { background: #fff; color: #000; width: 794px; min-height: 1000px;
+    margin: 0 auto; padding: 48px 56px; font-family: Arial, Helvetica, sans-serif;
+    font-size: 13px; box-shadow: 0 2px 12px rgba(0,0,0,.2); }
+  .invoice-sheet h1.inv-title { text-align: right; font-size: 26px; letter-spacing: 1px; margin: 0 0 18px; }
+  .inv-top { display: flex; justify-content: space-between; gap: 30px; }
+  .inv-top table td { padding: 3px 6px 3px 0; vertical-align: top; }
+  .inv-top .lbl { font-weight: bold; white-space: nowrap; }
+  .inv-rule { border: none; border-top: 2px solid #000; margin: 18px 0; }
+  .inv-to { display: flex; justify-content: space-between; gap: 30px; margin-bottom: 20px; }
+  .inv-items { width: 100%; border-collapse: collapse; margin-top: 6px; }
+  .inv-items th { border: 1px solid #555; padding: 6px 8px; font-size: 12px; background: #eef1f7; }
+  .inv-items td { border: 1px solid #999; padding: 6px 8px; font-size: 12.5px; }
+  .inv-items td.num, .inv-items th.num { text-align: right; white-space: nowrap; }
+  .inv-totals { width: 100%; margin-top: 4px; border-collapse: collapse; }
+  .inv-totals td { padding: 5px 8px; }
+  .inv-totals .t-lbl { text-align: right; font-weight: bold; }
+  .inv-totals .t-val { text-align: right; width: 110px; border: 1px solid #999; }
+  .inv-pay { margin-top: 26px; }
+  .inv-pay h3 { font-size: 13px; text-decoration: underline; margin: 0 0 6px; }
+  .inv-pay td { padding: 2px 12px 2px 0; }
+
+  @media print {
+    body * { visibility: hidden; }
+    #printArea, #printArea * { visibility: visible; }
+    #printArea { position: absolute; left: 0; top: 0; width: 100%; }
+    .invoice-sheet { box-shadow: none; width: 100%; min-height: 0; padding: 10mm 12mm; }
+    @page { size: A4; margin: 8mm; }
+  }
+</style>
+</head>
+<body>
+
+<header class="appbar">
+  <h1>NDIS Invoice 工具</h1>
+  <nav class="tabs" id="tabNav">
+    <button data-tab="sessions" class="active">加新的 Session</button>
+    <button data-tab="invoice">出 Invoice</button>
+    <button data-tab="stats">每周统计薪资</button>
+    <button data-tab="archive">Invoice 记录</button>
+    <button data-tab="clients">客人</button>
+    <button data-tab="settings">设置</button>
+  </nav>
+</header>
+<div id="ledgerBanner" class="ledger-banner off">
+  <span id="ledgerBannerText">账本：仅此浏览器。</span>
+          <button type="button" class="ghost" id="connectDiskBtn" style="margin-left:12px;">连接 .openjarvis 账本</button>
+</div>
+
+<main>
+
+<!-- ============ TAB: SESSIONS ============ -->
+<section class="tab active" id="tab-sessions">
+  <div class="card" id="migrateHint" style="border-color:#f59e0b; background:#fffbeb; display:none;">
+    <h2>客人不见了？不是另一套工具</h2>
+    <p class="muted" style="margin:0 0 10px;">这是同一份 NDIS Invoice 工具。浏览器按<strong>网址</strong>分开存资料。你原来的客人/session 还在旧地址：</p>
+    <p style="margin:0 0 10px;"><a href="https://jackson1-netizen.github.io/ndis-invoice-tool/" target="_blank" rel="noopener">https://jackson1-netizen.github.io/ndis-invoice-tool/</a></p>
+    <ol class="muted" style="margin:0 0 10px; padding-left:20px;">
+      <li>打开上面那个网站（就是你一直在用的）</li>
+      <li>「设置」→「导出备份 (JSON)」</li>
+      <li>回到本页「设置」→「导入备份」，选刚下载的文件</li>
+    </ol>
+    <p class="muted" style="margin:0;">或点页顶「连接 .openjarvis 账本」，选中文件夹 <code>C:\Users\Admin\.openjarvis</code> 即可（不用再点 json）。</p>
+  </div>
+  <div class="card">
+    <h2 id="sessFormTitle">添加 Session</h2>
+    <div class="grid">
+      <label class="field">客人
+        <select id="sessClient"></select>
+      </label>
+      <label class="field">支持类型
+        <select id="sessSupportType">
+          <option value="community">Community Participation（出门/社区）</option>
+          <option value="dailyLife">Daily Life Self-Care（居家日常）</option>
+        </select>
+      </label>
+      <label class="field">日期
+        <input type="date" id="sessDate">
+      </label>
+      <label class="field">开始时间
+        <input type="time" id="sessStart">
+      </label>
+      <label class="field">结束时间
+        <input type="time" id="sessEnd">
+      </label>
+      <label class="field" id="sessKmField">开车公里数（没有就留空）
+        <input type="number" id="sessKm" min="0" step="0.1" placeholder="0">
+      </label>
+      <label class="check" style="align-self:end;">
+        <input type="checkbox" id="sessPH"> Public Holiday
+        <span class="ph-name" id="phName"></span>
+      </label>
+      <label class="check" style="align-self:end;">
+        <input type="checkbox" id="sessNF2F"> Non face-to-face（电话等）
+      </label>
+    </div>
+    <div class="hint" id="sessSupportHint" style="margin-top:10px;"></div>
+    <div style="margin-top:14px; display:flex; gap:10px;">
+      <button class="primary" id="sessSaveBtn">保存 Session</button>
+      <button class="ghost" id="sessCancelBtn" style="display:none;">取消编辑</button>
+    </div>
+    <div class="hint">默认面对面。勾选 Non face-to-face 用于电话等（发票只标注 Non face-to-face，不算开车）。周六/周日/假日整天一个价；平日按 白天 / 晚间 8pm 后 / 夜间 0–6am 自动拆开（Daily Life 有独立 Night code；Community 没有 Night code，0–6am 仍按 Daytime）。</div>
+  </div>
+
+  <div class="card">
+    <h2>还没开 Invoice 的 Sessions</h2>
+    <div id="sessList"></div>
+  </div>
+</section>
+
+<!-- ============ TAB: INVOICE ============ -->
+<section class="tab" id="tab-invoice">
+  <div class="card">
+    <h2>生成新 Invoice</h2>
+    <div class="grid">
+      <label class="field">客人
+        <select id="invClient"></select>
+      </label>
+      <label class="field">Invoice 日期
+        <input type="date" id="invDate">
+      </label>
+      <label class="field">到期日 (Due date)
+        <input type="date" id="invDue">
+      </label>
+    </div>
+    <div id="invSessionPick" style="margin-top:14px;"></div>
+    <div style="margin-top:14px;">
+      <button class="primary" id="invGenBtn">生成 Invoice</button>
+    </div>
+  </div>
+
+  <div class="card" id="previewCard" style="display:none;">
+    <h2>预览 <span class="muted" id="previewLabel"></span></h2>
+    <div style="margin-bottom:12px; display:flex; gap:10px; align-items:center;">
+      <button class="primary" id="printBtn">保存为 PDF / 打印</button>
+      <span class="hint" id="printHint"></span>
+    </div>
+    <div class="sheet-wrap">
+      <div id="printArea"><div class="invoice-sheet" id="invoiceSheet"></div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ TAB: STATS ============ -->
+<section class="tab" id="tab-stats">
+  <div class="card">
+    <h2>每周统计薪资</h2>
+    <div class="stats-nav">
+      <button type="button" class="ghost" id="statsPrevWeek">← 上一周</button>
+      <span class="week-label" id="statsWeekRange"></span>
+      <button type="button" class="ghost" id="statsNextWeek">下一周 →</button>
+      <label class="field" style="margin-left:auto; min-width:200px;">
+        客人
+        <select id="statsClient"></select>
+      </label>
+    </div>
+    <p class="muted" id="statsEmptyHint" style="display:none; margin:0 0 12px;">这周还没有 session</p>
+    <div class="grid" id="statsSummary"></div>
+  </div>
+  <div class="card">
+    <h2>有上班的周（含本周）</h2>
+    <p class="muted" style="margin:0 0 10px;">过去空周不显示；本周即使还没加 session 也会保留。</p>
+    <div id="statsWeekList"></div>
+  </div>
+  <div class="card">
+    <h2>每月统计</h2>
+    <div id="statsMonthList"></div>
+  </div>
+  <div class="card">
+    <h2>图表</h2>
+    <div class="stats-charts">
+      <div class="chart-card">
+        <h3>每周合计（有上班的周）</h3>
+        <div class="bar-chart" id="statsWeekChart"></div>
+      </div>
+      <div class="chart-card">
+        <h3>每月合计</h3>
+        <div class="bar-chart" id="statsMonthChart"></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ TAB: ARCHIVE ============ -->
+<section class="tab" id="tab-archive">
+  <div class="card">
+    <h2>Invoice 记录</h2>
+    <div class="grid" style="margin-top:12px;">
+      <label class="field">搜索
+        <input type="search" id="archiveSearch" placeholder="编号、客人、金额…">
+      </label>
+      <label class="field">客人
+        <select id="archiveClient"></select>
+      </label>
+      <label class="field">Invoice 日期从
+        <input type="date" id="archiveFrom">
+      </label>
+      <label class="field">到
+        <input type="date" id="archiveTo">
+      </label>
+    </div>
+    <div style="margin-top:12px; display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+      <button type="button" class="primary" id="archiveExportFilteredBtn">导出全部（筛选结果）</button>
+      <span class="muted">仅导出有效（非作废）invoice；Chrome 可直接选工作文件夹。</span>
+    </div>
+    <div id="archiveList" style="margin-top:14px;"></div>
+  </div>
+  <div class="card">
+    <h2>已作废（可恢复）</h2>
+    <p class="muted" style="margin-top:0;">作废的 invoice 不会出现在上面的记录里。需要时在这里恢复。</p>
+    <div id="archiveVoidedList" style="margin-top:10px;"></div>
+  </div>
+</section>
+
+<!-- ============ TAB: CLIENTS ============ -->
+<section class="tab" id="tab-clients">
+  <div class="card">
+    <h2 id="cliFormTitle">添加客人</h2>
+    <div class="grid">
+      <label class="field">姓名 *
+        <input id="cliName" placeholder="Robert Peters">
+      </label>
+      <label class="field">NDIS Number *
+        <input id="cliNdis" placeholder="430123456">
+      </label>
+      <label class="field">地址
+        <input id="cliAddress" placeholder="6/9 Kent Street, Box Hill VIC 3128">
+      </label>
+      <label class="field">Plan Manager / 收 invoice 的机构
+        <input id="cliPmName" placeholder="NDSP Plan Managers">
+      </label>
+      <label class="field">Plan Manager Email
+        <input id="cliPmEmail" placeholder="invoices@ndsp.com.au">
+      </label>
+    </div>
+    <details style="margin-top:12px;">
+      <summary class="muted" style="cursor:pointer;">这个客人用特别费率？（留空 = 用设置里的标准价）</summary>
+      <div class="grid" style="margin-top:10px;">
+        <label class="field">Weekday $/h <input type="number" id="ovWeekday" step="0.01"></label>
+        <label class="field">Weekday evening $/h <input type="number" id="ovEvening" step="0.01"></label>
+        <label class="field">Weekday night（0–6am）$/h <input type="number" id="ovNight" step="0.01"></label>
+        <label class="field">Saturday $/h <input type="number" id="ovSaturday" step="0.01"></label>
+        <label class="field">Sunday $/h <input type="number" id="ovSunday" step="0.01"></label>
+        <label class="field">Public holiday $/h <input type="number" id="ovPH" step="0.01"></label>
+        <label class="field">Travel $/km <input type="number" id="ovTravel" step="0.01"></label>
+      </div>
+    </details>
+    <div style="margin-top:14px; display:flex; gap:10px;">
+      <button class="primary" id="cliSaveBtn">保存客人</button>
+      <button class="ghost" id="cliCancelBtn" style="display:none;">取消编辑</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>客人列表</h2>
+    <div id="cliList"></div>
+  </div>
+</section>
+
+<!-- ============ TAB: SETTINGS ============ -->
+<section class="tab" id="tab-settings">
+  <div class="card">
+    <h2>我的资料（印在 invoice 上）</h2>
+    <div class="grid">
+      <label class="field">姓名 / 公司名 <input id="setName"></label>
+      <label class="field">ABN <input id="setAbn"></label>
+      <label class="field">地址 <input id="setAddress"></label>
+      <label class="field">Email <input id="setEmail"></label>
+      <label class="field">电话 <input id="setPhone"></label>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>银行资料（客人打钱用）</h2>
+    <div class="grid">
+      <label class="field">Account name <input id="setBankName"></label>
+      <label class="field">BSB <input id="setBsb"></label>
+      <label class="field">Account number <input id="setAccNo"></label>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>费率表（两种支持类型共用；可自行改）</h2>
+    <div class="grid">
+      <label class="field">Weekday daytime $/h <input type="number" id="setRateWeekday" step="0.01"></label>
+      <label class="field">Weekday evening（8pm–12am）$/h <input type="number" id="setRateEvening" step="0.01"></label>
+      <label class="field">Weekday night（12am–6am）$/h <input type="number" id="setRateNight" step="0.01"></label>
+      <label class="field">Saturday $/h <input type="number" id="setRateSaturday" step="0.01"></label>
+      <label class="field">Sunday $/h <input type="number" id="setRateSunday" step="0.01"></label>
+      <label class="field">Public holiday $/h <input type="number" id="setRatePH" step="0.01"></label>
+      <label class="field">Travel $/km <input type="number" id="setRateTravel" step="0.01"></label>
+    </div>
+    <div class="hint">预填你现在用的价；NDIS 2026–27 National 上限约 $73.58 / $81.07 / $82.57 / $103.54 / $133.50 / $163.46。</div>
+  </div>
+
+  <div class="card">
+    <h2>NDIS Line Items — Community Participation</h2>
+    <div class="grid">
+      <label class="field" style="grid-column: 1 / -1;">服务名称（印在 Description）
+        <input id="setSvcCommunity">
+      </label>
+      <label class="field">Weekday daytime <input id="setLiCWeekday"></label>
+      <label class="field">Weekday evening <input id="setLiCEvening"></label>
+      <label class="field">Saturday <input id="setLiCSaturday"></label>
+      <label class="field">Sunday <input id="setLiCSunday"></label>
+      <label class="field">Public holiday <input id="setLiCPH"></label>
+      <label class="field">Travel <input id="setLiCTravel"></label>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>NDIS Line Items — Daily Life Self-Care</h2>
+    <div class="grid">
+      <label class="field" style="grid-column: 1 / -1;">服务名称（印在 Description）
+        <input id="setSvcDailyLife">
+      </label>
+      <label class="field">Weekday daytime <input id="setLiDWeekday"></label>
+      <label class="field">Weekday evening <input id="setLiDEvening"></label>
+      <label class="field">Weekday night <input id="setLiDNight"></label>
+      <label class="field">Saturday <input id="setLiDSaturday"></label>
+      <label class="field">Sunday <input id="setLiDSunday"></label>
+      <label class="field">Public holiday <input id="setLiDPH"></label>
+      <label class="field">Travel <input id="setLiDTravel"></label>
+    </div>
+    <div class="hint">选 Session 支持类型后会自动用对应这套 code。可随时在这里改编号。</div>
+  </div>
+
+  <div class="card">
+    <h2>Invoice 编号</h2>
+    <div class="grid">
+      <label class="field">前缀 <input id="setPrefix"></label>
+      <label class="field">下一个号码 <input type="number" id="setNextNo" min="0" step="1"></label>
+      <label class="field">付款期限（天） <input type="number" id="setTerms" min="0" step="1"></label>
+    </div>
+    <div class="hint">允许从 0 起（会出 INV-0000）。可与已有编号重复；已出的单也可在「Invoice 记录」里改数字。</div>
+  </div>
+
+  <div style="margin: 4px 0 18px;">
+    <button class="primary" id="setSaveBtn">保存全部设置</button>
+  </div>
+
+  <div class="card">
+    <h2>备份</h2>
+    <p class="muted">建议连接本机账本，和 Jarvis 共用。仍可导出备份。</p>
+    <div style="display:flex; gap:10px; flex-wrap:wrap;">
+      <button class="ghost" type="button" id="connectDiskBtn2">连接 .openjarvis 账本</button>
+      <button class="ghost" id="exportBtn">导出备份 (JSON)</button>
+      <button class="ghost" id="importBtn">导入备份</button>
+      <input type="file" id="importFile" accept=".json,application/json" style="display:none;">
+    </div>
+  </div>
+</section>
+
+</main>
+
+<div class="toast" id="toast"></div>
+
+<script>
+'use strict';
+
+/* ================= state ================= */
+const STORAGE_KEY = 'ndis-invoice-tool';
+
+const DEFAULT_STATE = {
+  settings: {
+    providerName: 'Wai Wa Law',
+    abn: '75612731757',
+    address: '1106/3 Young Street, Box Hill, VIC 3128',
+    email: '',
+    phone: '',
+    bankAccountName: '',
+    bankBsb: '',
+    bankAccountNumber: '',
+    invoicePrefix: 'INV-',
+    nextInvoiceNumber: 1,
+    paymentTermsDays: 14,
+    rates: { weekday: 73, weekdayEvening: 81, weekdayNight: 82, saturday: 100, sunday: 133,
+             publicHoliday: 160, travelPerKm: 1.00 },
+    supportServiceNames: {
+      community: 'Access Community, Social and Recreational Activities - Standard',
+      dailyLife: 'Assistance With Self-Care Activities - Standard'
+    },
+    supportLineItems: {
+      community: {
+        weekday: '04_104_0125_6_1', weekdayEvening: '04_103_0125_6_1',
+        saturday: '04_105_0125_6_1', sunday: '04_106_0125_6_1',
+        publicHoliday: '04_102_0125_6_1', travel: '04_590_0125_6_1'
+      },
+      dailyLife: {
+        weekday: '01_011_0107_1_1', weekdayEvening: '01_015_0107_1_1',
+        weekdayNight: '01_002_0107_1_1',
+        saturday: '01_013_0107_1_1', sunday: '01_014_0107_1_1',
+        publicHoliday: '01_012_0107_1_1', travel: '04_590_0125_6_1'
+      }
+    },
+    // legacy fields kept in sync with community for older backups / code paths
+    lineItems: { weekday: '04_104_0125_6_1', weekdayEvening: '04_103_0125_6_1',
+                 saturday: '04_105_0125_6_1', sunday: '04_106_0125_6_1',
+                 publicHoliday: '04_102_0125_6_1', travel: '04_590_0125_6_1' },
+    serviceName: 'Access Community, Social and Recreational Activities - Standard'
+  },
+  clients: [],
+  sessions: [],
+  invoices: []
+};
+
+const SUPPORT_TYPE_LABEL = {
+  community: 'Community',
+  dailyLife: 'Daily Life'
+};
+
+function loadState() {
+  let saved = {};
+  try { saved = JSON.parse(localStorage.getItem(STORAGE_KEY)) || {}; } catch (e) { saved = {}; }
+  const d = JSON.parse(JSON.stringify(DEFAULT_STATE));
+  const s = saved.settings || {};
+  const rates = Object.assign({}, d.settings.rates, s.rates || {});
+  const supportLineItems = {
+    community: Object.assign({}, d.settings.supportLineItems.community,
+      (s.supportLineItems && s.supportLineItems.community) || s.lineItems || {}),
+    dailyLife: Object.assign({}, d.settings.supportLineItems.dailyLife,
+      (s.supportLineItems && s.supportLineItems.dailyLife) || {})
+  };
+  const supportServiceNames = Object.assign({}, d.settings.supportServiceNames, s.supportServiceNames || {});
+  if (s.serviceName && !s.supportServiceNames) supportServiceNames.community = s.serviceName;
+  return {
+    settings: Object.assign(d.settings, s, {
+      rates: rates,
+      supportLineItems: supportLineItems,
+      supportServiceNames: supportServiceNames,
+      lineItems: supportLineItems.community,
+      serviceName: supportServiceNames.community
+    }),
+    clients: saved.clients || [],
+    sessions: saved.sessions || [],
+    invoices: saved.invoices || []
+  };
+}
+let state = loadState();
+const LEDGER_URL = 'http://127.0.0.1:8765/data.json';
+const IDB_NAME = 'ndis-invoice-disk';
+let httpConnected = false;
+let diskHandle = null;
+let ledgerSnap = '';
+
+function ledgerConnected() { return httpConnected || !!diskHandle; }
+
+function mergeById(a, b) {
+  const map = {};
+  (a || []).concat(b || []).forEach(function (item) {
+    if (item && item.id) map[item.id] = item;
+  });
+  return Object.keys(map).map(function (k) { return map[k]; });
+}
+
+function mergeLedgers(file, local) {
+  const f = file || {};
+  const l = local || {};
+  const settings = Object.assign({}, f.settings || {}, l.settings || {});
+  const fn = Math.max(
+    Number((f.settings || {}).nextInvoiceNumber) || 1,
+    Number((l.settings || {}).nextInvoiceNumber) || 1
+  );
+  settings.nextInvoiceNumber = fn;
+  return {
+    settings: settings,
+    clients: mergeById(f.clients, l.clients),
+    sessions: mergeById(f.sessions, l.sessions),
+    invoices: mergeById(f.invoices, l.invoices)
+  };
+}
+
+function applyBlob(obj) {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(obj));
+  state = loadState();
+  ledgerSnap = JSON.stringify(state);
+}
+
+function updateMigrateHint() {
+  const el = $('migrateHint');
+  if (!el) return;
+  const empty = !(state.clients && state.clients.length);
+  el.style.display = empty ? '' : 'none';
+}
+
+function updateLedgerBanner() {
+  const el = $('ledgerBanner');
+  const tx = $('ledgerBannerText');
+  if (!el || !tx) return;
+  if (httpConnected) {
+    el.className = 'ledger-banner on';
+    tx.textContent = '账本：已连本机服务 (8765)。Jarvis 改完这里会更新。';
+  } else if (diskHandle) {
+    el.className = 'ledger-banner on';
+    tx.textContent = '账本：已连本机文件（GitHub 页也可同步，不必开 bat）。';
+  } else {
+    el.className = 'ledger-banner off';
+    tx.textContent = '账本：仅此浏览器。点「连接 .openjarvis 账本」，选中 C:\\Users\\Admin\\.openjarvis 文件夹即可。';
+  }
+}
+
+function idbOpen() {
+  return new Promise(function (resolve, reject) {
+    const req = indexedDB.open(IDB_NAME, 1);
+    req.onupgradeneeded = function () { req.result.createObjectStore('kv'); };
+    req.onerror = function () { reject(req.error); };
+    req.onsuccess = function () { resolve(req.result); };
+  });
+}
+
+async function idbPut(key, value) {
+  const db = await idbOpen();
+  return new Promise(function (resolve, reject) {
+    const tx = db.transaction('kv', 'readwrite');
+    tx.objectStore('kv').put(value, key);
+    tx.oncomplete = function () { resolve(); };
+    tx.onerror = function () { reject(tx.error); };
+  });
+}
+
+async function idbGet(key) {
+  try {
+    const db = await idbOpen();
+    return await new Promise(function (resolve) {
+      const tx = db.transaction('kv', 'readonly');
+      const g = tx.objectStore('kv').get(key);
+      g.onsuccess = function () { resolve(g.result || null); };
+      g.onerror = function () { resolve(null); };
+    });
+  } catch (e) {
+    return null;
+  }
+}
+
+async function idbPutHandle(handle) {
+  await idbPut('file', handle);
+}
+
+async function idbGetHandle() {
+  return idbGet('file');
+}
+
+async function writeDisk(text) {
+  if (!diskHandle) return;
+  const w = await diskHandle.createWritable();
+  await w.write(text);
+  await w.close();
+}
+
+async function readDiskText() {
+  if (!diskHandle) return null;
+  const f = await diskHandle.getFile();
+  return await f.text();
+}
+
+function saveState() {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  const body = JSON.stringify(state);
+  ledgerSnap = body;
+  if (httpConnected) {
+    fetch(LEDGER_URL, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: body
+    }).catch(function () {
+      httpConnected = false;
+      updateLedgerBanner();
+    });
+  }
+  if (diskHandle) {
+    writeDisk(body).catch(function () {
+      diskHandle = null;
+      updateLedgerBanner();
+    });
+  }
+}
+
+async function absorbRemote(remoteObj) {
+  const localRaw = localStorage.getItem(STORAGE_KEY);
+  let local = {};
+  try { local = JSON.parse(localRaw) || {}; } catch (e) { local = {}; }
+  const merged = mergeLedgers(remoteObj, local);
+  applyBlob(merged);
+  if (httpConnected) {
+    await fetch(LEDGER_URL, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(state)
+    });
+  }
+  if (diskHandle) await writeDisk(JSON.stringify(state));
+}
+
+async function connectHttpLedger() {
+  const r = await fetch(LEDGER_URL);
+  if (!r.ok) throw new Error('ledger');
+  const file = await r.json();
+  httpConnected = true;
+  await absorbRemote(file);
+}
+
+async function connectDiskHandle(handle, allowPrompt) {
+  const perm = await handle.queryPermission({ mode: 'readwrite' });
+  if (perm !== 'granted') {
+    if (!allowPrompt) throw new Error('need-gesture');
+    const next = await handle.requestPermission({ mode: 'readwrite' });
+    if (next !== 'granted') throw new Error('denied');
+  }
+  diskHandle = handle;
+  await idbPutHandle(handle);
+  const t = await readDiskText();
+  const file = JSON.parse(t || '{}');
+  await absorbRemote(file);
+}
+
+async function resolveOpenjarvisDir(dir) {
+  try {
+    await dir.getFileHandle('invoice-data.json');
+    return dir;
+  } catch (e) {
+    const names = ['.openjarvis', 'openjarvis'];
+    for (let i = 0; i < names.length; i++) {
+      try {
+        const sub = await dir.getDirectoryHandle(names[i]);
+        await sub.getFileHandle('invoice-data.json');
+        return sub;
+      } catch (e2) {}
+    }
+    if (dir && (dir.name === '.openjarvis' || dir.name === 'openjarvis')) return dir;
+    throw e;
+  }
+}
+
+async function fileHandleFromOpenjarvisDir(dir) {
+  try {
+    return await dir.getFileHandle('invoice-data.json');
+  } catch (e) {
+    if (dir && (dir.name === '.openjarvis' || dir.name === 'openjarvis')) {
+      return await dir.getFileHandle('invoice-data.json', { create: true });
+    }
+    throw e;
+  }
+}
+
+async function pickDiskLedger() {
+  if (httpConnected) {
+    toast('已经连上本机账本');
+    return;
+  }
+  if (!window.showDirectoryPicker && !window.showOpenFilePicker) {
+    alert('请用 Chrome。选中文件夹 C:\\Users\\Admin\\.openjarvis');
+    return;
+  }
+  try {
+    const existingFile = await idbGetHandle();
+    if (existingFile) {
+      try {
+        await connectDiskHandle(existingFile, true);
+        toast('已连接本机账本');
+        updateLedgerBanner();
+        renderAll();
+        return;
+      } catch (e) { /* open the folder picker in the same place */ }
+    }
+    const existingDir = await idbGet('dir');
+    const startIn = existingDir || existingFile || 'desktop';
+    let fileHandle = null;
+    if (window.showDirectoryPicker) {
+      const dirOpts = { id: 'openjarvis-ledger-dir', mode: 'readwrite', startIn: startIn };
+      let picked;
+      try {
+        picked = await window.showDirectoryPicker(dirOpts);
+      } catch (e) {
+        if (e && e.name === 'AbortError') throw e;
+        picked = await window.showDirectoryPicker({ id: 'openjarvis-ledger-dir', mode: 'readwrite' });
+      }
+      let dir;
+      try {
+        dir = await resolveOpenjarvisDir(picked);
+        fileHandle = await fileHandleFromOpenjarvisDir(dir);
+      } catch (e) {
+        alert('请选中文件夹 C:\\Users\\Admin\\.openjarvis\n（桌面上的 openjarvis 也可以，点一下再按「选择文件夹」。不用再点 json。）');
+        return;
+      }
+      await idbPut('dir', dir);
+    } else {
+      const fileOpts = {
+        id: 'openjarvis-ledger-file',
+        types: [{ description: 'Invoice JSON', accept: { 'application/json': ['.json'] } }],
+        suggestedName: 'invoice-data.json'
+      };
+      if (startIn) fileOpts.startIn = startIn;
+      const handles = await window.showOpenFilePicker(fileOpts);
+      fileHandle = handles[0];
+    }
+    await connectDiskHandle(fileHandle, true);
+    toast('已连接本机账本');
+    updateLedgerBanner();
+    renderAll();
+  } catch (e) {
+    if (e && e.name === 'AbortError') return;
+    alert('没连上。请选中文件夹 C:\\Users\\Admin\\.openjarvis');
+  }
+}
+
+async function connectLedger() {
+  try { await connectHttpLedger(); } catch (e) { httpConnected = false; }
+  if (!diskHandle) {
+    try {
+      const h = await idbGetHandle();
+      if (h) await connectDiskHandle(h, false);
+    } catch (e) { diskHandle = null; }
+  }
+  updateLedgerBanner();
+  renderAll();
+}
+
+setInterval(async function () {
+  if (!ledgerConnected()) return;
+  try {
+    let t = null;
+    if (httpConnected) {
+      const r = await fetch(LEDGER_URL);
+      if (r.ok) t = await r.text();
+    } else if (diskHandle) {
+      t = await readDiskText();
+    }
+    if (t && t !== ledgerSnap) {
+      ledgerSnap = t;
+      localStorage.setItem(STORAGE_KEY, t);
+      state = loadState();
+      renderAll();
+      toast('账本已更新');
+    }
+  } catch (e) {}
+}, 4000);
+
+/* ================= VIC public holidays (auto-tick helper) ================= */
+const VIC_HOLIDAYS = {
+  '2026-01-01': "New Year's Day", '2026-01-26': 'Australia Day',
+  '2026-03-09': 'Labour Day', '2026-04-03': 'Good Friday',
+  '2026-04-04': 'Saturday before Easter', '2026-04-05': 'Easter Sunday',
+  '2026-04-06': 'Easter Monday', '2026-04-25': 'ANZAC Day',
+  '2026-06-08': "King's Birthday", '2026-09-25': 'AFL Grand Final Friday (待官方确认)',
+  '2026-11-03': 'Melbourne Cup', '2026-12-25': 'Christmas Day',
+  '2026-12-26': 'Boxing Day', '2026-12-28': 'Boxing Day 补假',
+  '2027-01-01': "New Year's Day", '2027-01-26': 'Australia Day',
+  '2027-03-08': 'Labour Day', '2027-03-26': 'Good Friday',
+  '2027-03-27': 'Saturday before Easter', '2027-03-28': 'Easter Sunday',
+  '2027-03-29': 'Easter Monday', '2027-04-25': 'ANZAC Day',
+  '2027-06-14': "King's Birthday", '2027-09-24': 'AFL Grand Final Friday (待官方确认)',
+  '2027-11-02': 'Melbourne Cup', '2027-12-25': 'Christmas Day',
+  '2027-12-26': 'Boxing Day', '2027-12-27': 'Christmas 补假', '2027-12-28': 'Boxing Day 补假'
+};
+
+/* ================= helpers ================= */
+const $ = id => document.getElementById(id);
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g,
+  c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const round2 = n => Math.round(n * 100) / 100;
+const money = n => '$' + Number(n).toLocaleString('en-AU', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const fmtDate = iso => { if (!iso) return ''; const [y, m, d] = iso.split('-'); return d + '/' + m + '/' + y; };
+const todayStr = () => { const t = new Date(); return t.getFullYear() + '-' + String(t.getMonth() + 1).padStart(2, '0') + '-' + String(t.getDate()).padStart(2, '0'); };
+function addDays(iso, days) {
+  const d = new Date(iso + 'T12:00:00');
+  d.setDate(d.getDate() + days);
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
+const toMin = t => { const [h, m] = t.split(':').map(Number); return h * 60 + m; };
+
+let toastTimer = null;
+function toast(msg) {
+  const el = $('toast'); el.textContent = msg; el.classList.add('show');
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => el.classList.remove('show'), 2200);
+}
+
+/* ================= rate engine ================= */
+const NIGHT_END_MIN = 6 * 60;      // 6:00 AM
+const EVENING_START_MIN = 20 * 60; // 8:00 PM
+const DAY_LABEL = { weekday: 'Weekday Daytime', weekdayEvening: 'Weekday Evening',
+  weekdayNight: 'Weekday Night', saturday: 'Saturday', sunday: 'Sunday',
+  publicHoliday: 'Public Holiday' };
+
+function overlapMin(start, end, bandStart, bandEnd) {
+  return Math.max(0, Math.min(end, bandEnd) - Math.max(start, bandStart));
+}
+
+function effectiveRates(client) {
+  const r = Object.assign({}, state.settings.rates);
+  if (client && client.rateOverrides) {
+    for (const k of Object.keys(client.rateOverrides)) {
+      const v = client.rateOverrides[k];
+      if (v !== null && v !== '' && !isNaN(v)) r[k] = Number(v);
+    }
+  }
+  return r;
+}
+
+function supportTypeOf(session) {
+  return session && session.supportType === 'dailyLife' ? 'dailyLife' : 'community';
+}
+
+function lineItemsFor(session, settings) {
+  const t = supportTypeOf(session);
+  const fromSettings = settings.supportLineItems && settings.supportLineItems[t];
+  return fromSettings || DEFAULT_STATE.settings.supportLineItems[t];
+}
+
+function serviceNameFor(session, settings) {
+  const t = supportTypeOf(session);
+  const names = settings.supportServiceNames || {};
+  return names[t] || DEFAULT_STATE.settings.supportServiceNames[t];
+}
+
+// Returns array of { serviceDate, description, lineItem, qty, unit, rate, amount }
+function sessionLines(session, client, settings) {
+  const rates = effectiveRates(client);
+  const li = lineItemsFor(session, settings);
+  const name = serviceNameFor(session, settings);
+  const lines = [];
+  const start = toMin(session.startTime), end = toMin(session.endTime);
+  const dow = new Date(session.date + 'T12:00:00').getDay(); // 0=Sun 6=Sat
+  const isDailyLife = supportTypeOf(session) === 'dailyLife';
+
+  function hourLine(kind, minutes) {
+    if (minutes <= 0) return;
+    const code = li[kind];
+    if (!code) return;
+    const qty = round2(minutes / 60);
+    let desc = name + ' (' + DAY_LABEL[kind] + ')';
+    if (session.isNonFaceToFace) desc += ' — Non face-to-face';
+    lines.push({ serviceDate: session.date,
+      description: desc,
+      lineItem: code, qty: qty, unit: 'h', rate: rates[kind],
+      amount: round2(qty * rates[kind]) });
+  }
+
+  if (session.isPublicHoliday) {
+    hourLine('publicHoliday', end - start);
+  } else if (dow === 6) {
+    hourLine('saturday', end - start);
+  } else if (dow === 0) {
+    hourLine('sunday', end - start);
+  } else if (isDailyLife) {
+    hourLine('weekdayNight', overlapMin(start, end, 0, NIGHT_END_MIN));
+    hourLine('weekday', overlapMin(start, end, NIGHT_END_MIN, EVENING_START_MIN));
+    hourLine('weekdayEvening', overlapMin(start, end, EVENING_START_MIN, 24 * 60));
+  } else {
+    // Community: no official Night item — 0:00–8:00pm daytime, 8pm+ evening
+    hourLine('weekday', overlapMin(start, end, 0, EVENING_START_MIN));
+    hourLine('weekdayEvening', overlapMin(start, end, EVENING_START_MIN, 24 * 60));
+  }
+
+  const km = session.isNonFaceToFace ? 0 : (Number(session.km) || 0);
+  if (km > 0) {
+    lines.push({ serviceDate: session.date,
+      description: 'Activity Based Transport',
+      lineItem: li.travel, qty: round2(km), unit: 'km', rate: rates.travelPerKm,
+      amount: round2(km * rates.travelPerKm) });
+  }
+  return lines;
+}
+const sessionTotal = (session, client) =>
+  round2(sessionLines(session, client, state.settings).reduce((a, l) => a + l.amount, 0));
+
+const getClient = id => state.clients.find(c => c.id === id);
+
+function startOfWeekMonday(isoDate) {
+  const d = new Date(isoDate + 'T12:00:00');
+  const day = d.getDay();
+  d.setDate(d.getDate() - (day === 0 ? 6 : day - 1));
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-'
+    + String(d.getDate()).padStart(2, '0');
+}
+
+function weekStats(weekStartIso, clientIdOrNull) {
+  const weekEnd = addDays(weekStartIso, 6);
+  let sessions = state.sessions.filter(s => s.date >= weekStartIso && s.date <= weekEnd);
+  if (clientIdOrNull) sessions = sessions.filter(s => s.clientId === clientIdOrNull);
+
+  const hours = { weekday: 0, saturday: 0, sunday: 0, publicHoliday: 0 };
+  let labourPay = 0;
+  let travelPay = 0;
+
+  for (const session of sessions) {
+    const client = getClient(session.clientId);
+    const lines = sessionLines(session, client, state.settings);
+    const dow = new Date(session.date + 'T12:00:00').getDay();
+    const bucket = session.isPublicHoliday ? 'publicHoliday'
+      : dow === 6 ? 'saturday' : dow === 0 ? 'sunday' : 'weekday';
+
+    for (const line of lines) {
+      if (line.unit === 'h') {
+        hours[bucket] = round2(hours[bucket] + line.qty);
+        labourPay = round2(labourPay + line.amount);
+      } else {
+        travelPay = round2(travelPay + line.amount);
+      }
+    }
+  }
+
+  const totalHours = round2(hours.weekday + hours.saturday + hours.sunday + hours.publicHoliday);
+  return {
+    weekStart: weekStartIso,
+    weekEnd,
+    totalHours,
+    hours,
+    labourPay,
+    travelPay,
+    totalPay: round2(labourPay + travelPay),
+    sessionCount: sessions.length
+  };
+}
+
+/* weekStats fixture (2026-01-05 Mon): Tue 18:00–21:00 → 3h weekday / $227; Wed PH 09–12 → 3h PH / $480;
+   Sat 10–14 → 4h sat / $400; 50 km → $50 travel; total 10h, labour $1107, totalPay $1157 */
+
+/* ================= stats tab ================= */
+let statsWeekStart = startOfWeekMonday(todayStr());
+let statsClientId = '';
+
+function fillStatsClientSelect() {
+  const sel = $('statsClient');
+  const prev = statsClientId;
+  sel.innerHTML = '<option value="">全部客人</option>' +
+    state.clients.map(c => '<option value="' + c.id + '">' + esc(c.name) + '</option>').join('');
+  if (prev === '' || state.clients.some(c => c.id === prev)) sel.value = prev;
+  statsClientId = sel.value;
+}
+
+function statMetric(label, value, extraClass) {
+  return '<div class="stats-metric' + (extraClass ? ' ' + extraClass : '') + '"><div class="lbl">' +
+    label + '</div><div class="val">' + value + '</div></div>';
+}
+
+function monthKeyFromIso(iso) {
+  return iso.slice(0, 7); // YYYY-MM
+}
+
+function monthLabel(ym) {
+  const [y, m] = ym.split('-');
+  return y + '年' + Number(m) + '月';
+}
+
+/** Active weeks: current week always; past weeks only if hours/pay/sessions. Newest first. Cap 12. */
+function activeWeekStatsList(clientIdOrNull) {
+  const currentMonday = startOfWeekMonday(todayStr());
+  const rows = [];
+  // Scan far enough to find up to 12 active weeks (incl. current)
+  for (let i = 0; i < 104; i++) {
+    const weekStart = addDays(currentMonday, -7 * i);
+    const row = weekStats(weekStart, clientIdOrNull);
+    const isCurrent = weekStart === currentMonday;
+    const hasWork = row.sessionCount > 0 || row.totalHours > 0 || row.totalPay > 0;
+    if (isCurrent || hasWork) {
+      rows.push(Object.assign({ isCurrent: isCurrent }, row));
+      if (rows.length >= 12) break;
+    }
+  }
+  return rows;
+}
+
+function monthStatsList(clientIdOrNull) {
+  let sessions = state.sessions.slice();
+  if (clientIdOrNull) sessions = sessions.filter(s => s.clientId === clientIdOrNull);
+  const byMonth = {};
+  for (const session of sessions) {
+    const mk = monthKeyFromIso(session.date);
+    if (!byMonth[mk]) {
+      byMonth[mk] = { month: mk, totalHours: 0, labourPay: 0, travelPay: 0, totalPay: 0, sessionCount: 0 };
+    }
+    const client = getClient(session.clientId);
+    const lines = sessionLines(session, client, state.settings);
+    byMonth[mk].sessionCount += 1;
+    for (const line of lines) {
+      if (line.unit === 'h') {
+        byMonth[mk].totalHours = round2(byMonth[mk].totalHours + line.qty);
+        byMonth[mk].labourPay = round2(byMonth[mk].labourPay + line.amount);
+      } else {
+        byMonth[mk].travelPay = round2(byMonth[mk].travelPay + line.amount);
+      }
+    }
+    byMonth[mk].totalPay = round2(byMonth[mk].labourPay + byMonth[mk].travelPay);
+  }
+  // Always include current calendar month even if empty
+  const cur = monthKeyFromIso(todayStr());
+  if (!byMonth[cur]) {
+    byMonth[cur] = { month: cur, totalHours: 0, labourPay: 0, travelPay: 0, totalPay: 0, sessionCount: 0 };
+  }
+  return Object.keys(byMonth).sort().reverse().map(k => byMonth[k]);
+}
+
+function renderBarChart(containerId, items, valueKey, barClass, labelFn) {
+  const el = $(containerId);
+  if (!items.length) {
+    el.innerHTML = '<p class="muted" style="margin:0;">暂无数据</p>';
+    return;
+  }
+  // Chart left→right = oldest→newest for reading
+  const ordered = items.slice().reverse();
+  const max = Math.max.apply(null, ordered.map(it => Number(it[valueKey]) || 0).concat([1]));
+  el.innerHTML = ordered.map(it => {
+    const v = Number(it[valueKey]) || 0;
+    const pct = Math.max(2, Math.round((v / max) * 100));
+    const valTxt = valueKey.toLowerCase().indexOf('hour') >= 0
+      ? ((v === 0 ? '0' : String(v)) + 'h')
+      : money(v);
+    return '<div class="bar-col"><div class="bar-val">' + esc(valTxt) + '</div>' +
+      '<div class="bar ' + barClass + '" style="height:' + pct + '%"></div>' +
+      '<div class="bar-lbl">' + esc(labelFn(it)) + '</div></div>';
+  }).join('');
+}
+
+function renderStats() {
+  statsWeekStart = startOfWeekMonday(statsWeekStart);
+  fillStatsClientSelect();
+  const clientIdOrNull = statsClientId === '' ? null : statsClientId;
+  const st = weekStats(statsWeekStart, clientIdOrNull);
+
+  $('statsWeekRange').textContent = fmtDate(st.weekStart) + ' – ' + fmtDate(st.weekEnd);
+  $('statsEmptyHint').style.display = st.sessionCount === 0 ? '' : 'none';
+
+  const h = n => (n === 0 ? '0' : String(n)) + ' h';
+  $('statsSummary').innerHTML =
+    statMetric('总工时', h(st.totalHours)) +
+    statMetric('平日', h(st.hours.weekday)) +
+    statMetric('周六', h(st.hours.saturday)) +
+    statMetric('周日', h(st.hours.sunday)) +
+    statMetric('公共假日', h(st.hours.publicHoliday)) +
+    statMetric('工时收入', money(st.labourPay)) +
+    statMetric('车费', money(st.travelPay)) +
+    statMetric('合计', money(st.totalPay), 'total');
+
+  const weekRows = activeWeekStatsList(clientIdOrNull);
+  let listHtml = '<table class="list"><tr><th>周</th><th>总工时</th><th>工时收入</th><th>车费</th><th>合计</th></tr>';
+  for (const row of weekRows) {
+    const sel = row.weekStart === statsWeekStart ? ' selected' : '';
+    const curTag = row.isCurrent ? ' <span class="ph-name">本周</span>' : '';
+    listHtml += '<tr class="stats-week-row' + sel + '" data-week="' + row.weekStart + '"><td>' +
+      fmtDate(row.weekStart) + ' – ' + fmtDate(row.weekEnd) + curTag + '</td><td>' + h(row.totalHours) +
+      '</td><td>' + money(row.labourPay) + '</td><td>' + money(row.travelPay) +
+      '</td><td class="total-cell">' + money(row.totalPay) + '</td></tr>';
+  }
+  if (!weekRows.length) listHtml += '<tr><td colspan="5" class="muted">还没有有上班的周</td></tr>';
+  $('statsWeekList').innerHTML = listHtml + '</table>';
+
+  const monthRows = monthStatsList(clientIdOrNull);
+  let monthHtml = '<table class="list"><tr><th>月份</th><th>班次数</th><th>总工时</th><th>工时收入</th><th>车费</th><th>合计</th></tr>';
+  let grand = 0;
+  for (const row of monthRows) {
+    grand = round2(grand + row.totalPay);
+    const isCur = row.month === monthKeyFromIso(todayStr());
+    monthHtml += '<tr class="month-total-row"><td>' + monthLabel(row.month) +
+      (isCur ? ' <span class="ph-name">本月</span>' : '') + '</td><td>' + row.sessionCount +
+      '</td><td>' + h(row.totalHours) + '</td><td>' + money(row.labourPay) +
+      '</td><td>' + money(row.travelPay) + '</td><td class="total-cell pay">' +
+      money(row.totalPay) + '</td></tr>';
+  }
+  monthHtml += '<tr><td colspan="5" style="text-align:right;color:var(--muted);">列表合计</td>' +
+    '<td class="total-cell pay">' + money(grand) + '</td></tr>';
+  $('statsMonthList').innerHTML = monthHtml + '</table>';
+
+  renderBarChart('statsWeekChart', weekRows, 'totalPay', 'bar-week', function (r) {
+    return r.weekStart.slice(5).replace('-', '/') + (r.isCurrent ? '*' : '');
+  });
+  // Monthly chart: last 12 months max, newest on right
+  renderBarChart('statsMonthChart', monthRows.slice(0, 12), 'totalPay', 'bar-month', function (r) {
+    return r.month.slice(2); // YY-MM
+  });
+}
+
+$('statsPrevWeek').addEventListener('click', () => {
+  statsWeekStart = startOfWeekMonday(addDays(statsWeekStart, -7));
+  renderStats();
+});
+$('statsNextWeek').addEventListener('click', () => {
+  statsWeekStart = startOfWeekMonday(addDays(statsWeekStart, 7));
+  renderStats();
+});
+$('statsClient').addEventListener('change', () => {
+  statsClientId = $('statsClient').value;
+  renderStats();
+});
+$('statsWeekList').addEventListener('click', e => {
+  const row = e.target.closest('tr[data-week]');
+  if (!row) return;
+  statsWeekStart = startOfWeekMonday(row.dataset.week);
+  renderStats();
+});
+
+/* ================= tabs ================= */
+$('tabNav').addEventListener('click', e => {
+  const btn = e.target.closest('button[data-tab]');
+  if (!btn) return;
+  document.querySelectorAll('#tabNav button').forEach(b => b.classList.toggle('active', b === btn));
+  document.querySelectorAll('section.tab').forEach(s => s.classList.toggle('active', s.id === 'tab-' + btn.dataset.tab));
+});
+
+/* ================= clients tab ================= */
+let editingClientId = null;
+const OV_FIELDS = [['ovWeekday','weekday'],['ovEvening','weekdayEvening'],['ovNight','weekdayNight'],
+                   ['ovSaturday','saturday'],['ovSunday','sunday'],['ovPH','publicHoliday'],
+                   ['ovTravel','travelPerKm']];
+
+function clearClientForm() {
+  editingClientId = null;
+  ['cliName','cliNdis','cliAddress','cliPmName','cliPmEmail'].forEach(id => $(id).value = '');
+  OV_FIELDS.forEach(([id]) => $(id).value = '');
+  $('cliFormTitle').textContent = '添加客人';
+  $('cliCancelBtn').style.display = 'none';
+}
+
+$('cliSaveBtn').addEventListener('click', () => {
+  const name = $('cliName').value.trim();
+  const ndis = $('cliNdis').value.trim();
+  if (!name || !ndis) { alert('姓名和 NDIS Number 一定要填。'); return; }
+  const overrides = {};
+  OV_FIELDS.forEach(([id, key]) => { const v = $(id).value; if (v !== '') overrides[key] = Number(v); });
+  const data = { name: name, ndisNumber: ndis, address: $('cliAddress').value.trim(),
+    planManagerName: $('cliPmName').value.trim(), planManagerEmail: $('cliPmEmail').value.trim(),
+    rateOverrides: overrides };
+  if (editingClientId) {
+    Object.assign(getClient(editingClientId), data);
+  } else {
+    state.clients.push(Object.assign({ id: uid() }, data));
+  }
+  saveState(); clearClientForm(); renderAll(); toast('客人已保存');
+});
+$('cliCancelBtn').addEventListener('click', clearClientForm);
+
+function renderClients() {
+  const box = $('cliList');
+  if (!state.clients.length) { box.innerHTML = '<p class="muted">还没有客人，先在上面添加。</p>'; return; }
+  let html = '<table class="list"><tr><th>姓名</th><th>NDIS No.</th><th>Plan Manager</th><th></th></tr>';
+  for (const c of state.clients) {
+    html += '<tr><td>' + esc(c.name) + '</td><td>' + esc(c.ndisNumber) + '</td><td>' +
+      esc(c.planManagerName) + (c.planManagerEmail ? '<div class="muted">' + esc(c.planManagerEmail) + '</div>' : '') +
+      '</td><td style="white-space:nowrap;"><button class="ghost" data-edit="' + c.id +
+      '">编辑</button> <button class="danger" data-del="' + c.id + '">删除</button></td></tr>';
+  }
+  box.innerHTML = html + '</table>';
+}
+
+$('cliList').addEventListener('click', e => {
+  const ed = e.target.dataset.edit, del = e.target.dataset.del;
+  if (ed) {
+    const c = getClient(ed);
+    editingClientId = ed;
+    $('cliName').value = c.name; $('cliNdis').value = c.ndisNumber;
+    $('cliAddress').value = c.address || ''; $('cliPmName').value = c.planManagerName || '';
+    $('cliPmEmail').value = c.planManagerEmail || '';
+    OV_FIELDS.forEach(([id, key]) => {
+      $(id).value = (c.rateOverrides && c.rateOverrides[key] != null) ? c.rateOverrides[key] : '';
+    });
+    $('cliFormTitle').textContent = '编辑客人：' + c.name;
+    $('cliCancelBtn').style.display = '';
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+  if (del) {
+    const c = getClient(del);
+    if (state.sessions.some(s => s.clientId === del)) { alert('这个客人还有 session 记录，不能删除。'); return; }
+    if (!confirm('确定删除客人 ' + c.name + '？')) return;
+    state.clients = state.clients.filter(x => x.id !== del);
+    saveState(); renderAll(); toast('已删除');
+  }
+});
+
+/* ================= sessions tab ================= */
+let editingSessionId = null;
+
+function fillClientSelect(sel, keepValue) {
+  const prev = keepValue ? sel.value : '';
+  sel.innerHTML = state.clients.length
+    ? state.clients.map(c => '<option value="' + c.id + '">' + esc(c.name) + '</option>').join('')
+    : '<option value="">（先去"客人"页签添加客人）</option>';
+  if (prev && state.clients.some(c => c.id === prev)) sel.value = prev;
+}
+
+$('sessDate').addEventListener('change', () => {
+  const d = $('sessDate').value;
+  const name = VIC_HOLIDAYS[d];
+  $('sessPH').checked = !!name;
+  $('phName').textContent = name ? '(' + name + ')' : '';
+});
+
+function syncSessKmVisibility() {
+  const nf = $('sessNF2F').checked;
+  $('sessKmField').style.display = nf ? 'none' : '';
+  if (nf) $('sessKm').value = '';
+}
+
+$('sessNF2F').addEventListener('change', syncSessKmVisibility);
+
+function syncSupportHint() {
+  const t = $('sessSupportType').value === 'dailyLife' ? 'dailyLife' : 'community';
+  const li = state.settings.supportLineItems[t];
+  const name = state.settings.supportServiceNames[t];
+  const bits = [
+    name,
+    'Day ' + li.weekday,
+    'Eve ' + li.weekdayEvening,
+    t === 'dailyLife' ? ('Night ' + li.weekdayNight) : null,
+    'Sat ' + li.saturday,
+    'Sun ' + li.sunday,
+    'PH ' + li.publicHoliday
+  ].filter(Boolean);
+  $('sessSupportHint').textContent = '将使用：' + bits.join(' · ');
+}
+$('sessSupportType').addEventListener('change', syncSupportHint);
+
+function clearSessionForm() {
+  editingSessionId = null;
+  $('sessDate').value = todayStr();
+  $('sessStart').value = ''; $('sessEnd').value = ''; $('sessKm').value = '';
+  $('sessSupportType').value = 'community';
+  const name = VIC_HOLIDAYS[$('sessDate').value];
+  $('sessPH').checked = !!name; $('phName').textContent = name ? '(' + name + ')' : '';
+  $('sessNF2F').checked = false;
+  syncSessKmVisibility();
+  syncSupportHint();
+  $('sessFormTitle').textContent = '添加 Session';
+  $('sessCancelBtn').style.display = 'none';
+}
+
+$('sessSaveBtn').addEventListener('click', () => {
+  const clientId = $('sessClient').value;
+  const date = $('sessDate').value, start = $('sessStart').value, end = $('sessEnd').value;
+  if (!clientId) { alert('请先添加客人（"客人"页签）。'); return; }
+  if (!date || !start || !end) { alert('日期、开始时间、结束时间都要填。'); return; }
+  if (toMin(end) <= toMin(start)) { alert('结束时间要在开始时间之后（不支持跨午夜）。'); return; }
+  const isNF2F = $('sessNF2F').checked;
+  const km = isNF2F ? 0 : ($('sessKm').value === '' ? 0 : Number($('sessKm').value));
+  if (isNaN(km) || km < 0) { alert('公里数不对。'); return; }
+  const supportType = $('sessSupportType').value === 'dailyLife' ? 'dailyLife' : 'community';
+  const data = { clientId: clientId, date: date, startTime: start, endTime: end,
+                 km: km, isPublicHoliday: $('sessPH').checked, isNonFaceToFace: isNF2F,
+                 supportType: supportType };
+  if (editingSessionId) {
+    Object.assign(state.sessions.find(s => s.id === editingSessionId), data);
+  } else {
+    state.sessions.push(Object.assign({ id: uid(), invoiceId: null }, data));
+  }
+  saveState(); clearSessionForm(); renderAll(); toast('Session 已保存');
+});
+$('sessCancelBtn').addEventListener('click', () => { clearSessionForm(); });
+
+function describeLines(session, client) {
+  return sessionLines(session, client, state.settings)
+    .map(l => l.qty + (l.unit === 'h' ? ' h' : ' km') + ' × ' + money(l.rate) + ' = ' + money(l.amount))
+    .join('<br>');
+}
+
+function renderSessions() {
+  const box = $('sessList');
+  const open = state.sessions.filter(s => !s.invoiceId)
+    .sort((a, b) => a.date.localeCompare(b.date) || a.startTime.localeCompare(b.startTime));
+  if (!open.length) { box.innerHTML = '<p class="muted">没有待开票的 session。</p>'; return; }
+  let html = '<table class="list"><tr><th>日期</th><th>客人</th><th>时间</th><th>明细</th><th>合计</th><th></th></tr>';
+  for (const s of open) {
+    const c = getClient(s.clientId);
+    html += '<tr><td>' + fmtDate(s.date) + (s.isPublicHoliday ? ' <span class="ph-name">PH</span>' : '') +
+      (s.isNonFaceToFace ? ' <span class="muted">NF2F</span>' : '') +
+      ' <span class="muted">' + esc(SUPPORT_TYPE_LABEL[supportTypeOf(s)]) + '</span>' +
+      '</td><td>' + esc(c ? c.name : '?') + '</td><td>' + s.startTime + '–' + s.endTime +
+      (!s.isNonFaceToFace && s.km > 0 ? '<div class="muted">' + s.km + ' km</div>' : '') +
+      '</td><td class="muted">' + describeLines(s, c) + '</td>' +
+      '<td class="total-cell">' + money(sessionTotal(s, c)) + '</td>' +
+      '<td style="white-space:nowrap;"><button class="ghost" data-edit="' + s.id +
+      '">编辑</button> <button class="danger" data-del="' + s.id + '">删除</button></td></tr>';
+  }
+  box.innerHTML = html + '</table>';
+}
+
+$('sessList').addEventListener('click', e => {
+  const ed = e.target.dataset.edit, del = e.target.dataset.del;
+  if (ed) {
+    const s = state.sessions.find(x => x.id === ed);
+    editingSessionId = ed;
+    $('sessClient').value = s.clientId; $('sessDate').value = s.date;
+    $('sessStart').value = s.startTime; $('sessEnd').value = s.endTime;
+    $('sessKm').value = s.km || ''; $('sessPH').checked = s.isPublicHoliday;
+    $('sessNF2F').checked = !!s.isNonFaceToFace;
+    $('sessSupportType').value = supportTypeOf(s);
+    syncSessKmVisibility();
+    syncSupportHint();
+    $('phName').textContent = VIC_HOLIDAYS[s.date] ? '(' + VIC_HOLIDAYS[s.date] + ')' : '';
+    $('sessFormTitle').textContent = '编辑 Session';
+    $('sessCancelBtn').style.display = '';
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+  if (del) {
+    if (!confirm('删除这条 session？')) return;
+    state.sessions = state.sessions.filter(x => x.id !== del);
+    saveState(); renderAll(); toast('已删除');
+  }
+});
+
+/* ================= invoice tab ================= */
+function renderInvoicePick() {
+  const clientId = $('invClient').value;
+  const box = $('invSessionPick');
+  if (!clientId) { box.innerHTML = '<p class="muted">先添加客人和 session。</p>'; return; }
+  const c = getClient(clientId);
+  const open = state.sessions.filter(s => !s.invoiceId && s.clientId === clientId)
+    .sort((a, b) => a.date.localeCompare(b.date) || a.startTime.localeCompare(b.startTime));
+  if (!open.length) { box.innerHTML = '<p class="muted">这个客人没有待开票的 session。</p>'; return; }
+  let html = '<table class="list"><tr><th></th><th>日期</th><th>时间</th><th>明细</th><th>合计</th></tr>';
+  for (const s of open) {
+    html += '<tr><td><input type="checkbox" class="pickSess" value="' + s.id + '" checked></td>' +
+      '<td>' + fmtDate(s.date) + (s.isPublicHoliday ? ' <span class="ph-name">PH</span>' : '') +
+      (s.isNonFaceToFace ? ' <span class="muted">NF2F</span>' : '') +
+      ' <span class="muted">' + esc(SUPPORT_TYPE_LABEL[supportTypeOf(s)]) + '</span></td>' +
+      '<td>' + s.startTime + '–' + s.endTime + (!s.isNonFaceToFace && s.km > 0 ? '<div class="muted">' + s.km + ' km</div>' : '') + '</td>' +
+      '<td class="muted">' + describeLines(s, c) + '</td>' +
+      '<td class="total-cell">' + money(sessionTotal(s, c)) + '</td></tr>';
+  }
+  box.innerHTML = html + '</table>';
+}
+$('invClient').addEventListener('change', renderInvoicePick);
+$('invDate').addEventListener('change', () => {
+  if ($('invDate').value) $('invDue').value = addDays($('invDate').value, state.settings.paymentTermsDays);
+});
+
+$('invGenBtn').addEventListener('click', () => {
+  const st = state.settings;
+  const clientId = $('invClient').value;
+  const client = getClient(clientId);
+  if (!client) { alert('先添加客人。'); return; }
+
+  const missing = [];
+  if (!st.abn) missing.push('ABN');
+  if (!st.bankAccountName || !st.bankBsb || !st.bankAccountNumber) missing.push('银行资料');
+  if (!client.ndisNumber) missing.push('客人的 NDIS Number');
+  if (missing.length) { alert('先去"设置"/"客人"补齐：' + missing.join('、')); return; }
+
+  const ids = Array.from(document.querySelectorAll('.pickSess:checked')).map(x => x.value);
+  if (!ids.length) { alert('至少勾选一条 session。'); return; }
+  const invoiceDate = $('invDate').value || todayStr();
+  const dueDate = $('invDue').value || addDays(invoiceDate, st.paymentTermsDays);
+
+  const sessions = state.sessions.filter(s => ids.includes(s.id))
+    .sort((a, b) => a.date.localeCompare(b.date) || a.startTime.localeCompare(b.startTime));
+  let lines = [];
+  for (const s of sessions) lines = lines.concat(sessionLines(s, client, st));
+  const subtotal = round2(lines.reduce((a, l) => a + l.amount, 0));
+
+  const seq = Math.max(0, parseInt(st.nextInvoiceNumber, 10) || 0);
+  const number = formatInvoiceNumber(seq);
+  const sessionIds = sessions.map(s => s.id);
+  const inv = {
+    id: uid(), number: number, invoiceDate: invoiceDate, dueDate: dueDate,
+    voided: false, sessionIds: sessionIds,
+    provider: { name: st.providerName, abn: st.abn, address: st.address,
+      email: st.email, phone: st.phone, bankAccountName: st.bankAccountName,
+      bankBsb: st.bankBsb, bankAccountNumber: st.bankAccountNumber },
+    client: { name: client.name, ndisNumber: client.ndisNumber, address: client.address,
+      planManagerName: client.planManagerName, planManagerEmail: client.planManagerEmail },
+    lines: lines, subtotal: subtotal, gst: 0, total: subtotal
+  };
+  state.invoices.push(inv);
+  st.nextInvoiceNumber = seq + 1;
+  for (const s of sessions) s.invoiceId = inv.id;
+  saveState(); renderAll();
+  showPreview(inv);
+  toast('已生成 ' + number);
+});
+
+/* ---------- invoice rendering ---------- */
+let previewInvoice = null;
+
+function invoiceHtml(inv) {
+  const p = inv.provider, c = inv.client;
+  let rows = '';
+  for (const l of inv.lines) {
+    rows += '<tr><td>' + fmtDate(l.serviceDate) + '</td><td>' + esc(l.description) + '</td>' +
+      '<td>' + esc(l.lineItem) + '</td>' +
+      '<td class="num">' + l.qty.toFixed(l.unit === 'km' ? 1 : 2) + (l.unit === 'km' ? ' km' : '') + '</td>' +
+      '<td class="num">' + money(l.rate) + '</td>' +
+      '<td class="num">' + money(l.amount) + '</td></tr>';
+  }
+  return '<h1 class="inv-title">INVOICE</h1>' +
+    '<div class="inv-top"><table>' +
+    '<tr><td class="lbl">Company:</td><td>' + esc(p.name) + '</td></tr>' +
+    '<tr><td class="lbl">ABN:</td><td>' + esc(p.abn) + '</td></tr>' +
+    '<tr><td class="lbl">Address:</td><td>' + esc(p.address) + '</td></tr>' +
+    (p.email ? '<tr><td class="lbl">Email:</td><td>' + esc(p.email) + '</td></tr>' : '') +
+    (p.phone ? '<tr><td class="lbl">Phone:</td><td>' + esc(p.phone) + '</td></tr>' : '') +
+    '</table><table>' +
+    '<tr><td class="lbl">Invoice no:</td><td>' + esc(inv.number) + '</td></tr>' +
+    '<tr><td class="lbl">Invoice date:</td><td>' + fmtDate(inv.invoiceDate) + '</td></tr>' +
+    '<tr><td class="lbl">Due date:</td><td>' + fmtDate(inv.dueDate) + '</td></tr>' +
+    '</table></div>' +
+    '<hr class="inv-rule">' +
+    '<div class="inv-to"><table>' +
+    '<tr><td class="lbl">TO: NDIS client name:</td><td>' + esc(c.name) + '</td></tr>' +
+    '<tr><td class="lbl">NDIS number:</td><td>' + esc(c.ndisNumber) + '</td></tr>' +
+    (c.address ? '<tr><td class="lbl">Address:</td><td>' + esc(c.address) + '</td></tr>' : '') +
+    '</table><div>' +
+    (c.planManagerName ? '<b>C/ ' + esc(c.planManagerName) + '</b><br>' : '') +
+    (c.planManagerEmail ? esc(c.planManagerEmail) : '') +
+    '</div></div>' +
+    '<table class="inv-items"><tr><th>SERVICE DATE</th><th>DESCRIPTION</th><th>NDIS LINE ITEM</th>' +
+    '<th class="num">HOURS/<br>QUANTITY</th><th class="num">RATE</th><th class="num">AMOUNT</th></tr>' +
+    rows + '</table>' +
+    '<table class="inv-totals">' +
+    '<tr><td class="t-lbl">GST</td><td class="t-val">' + money(inv.gst) + '</td></tr>' +
+    '<tr><td class="t-lbl">INVOICE TOTAL</td><td class="t-val"><b>' + money(inv.total) + '</b></td></tr>' +
+    '</table>' +
+    '<div class="inv-pay"><h3>Payment details</h3><table>' +
+    '<tr><td>Account name:</td><td>' + esc(p.bankAccountName) + '</td></tr>' +
+    '<tr><td>BSB:</td><td>' + esc(p.bankBsb) + '</td></tr>' +
+    '<tr><td>Account number:</td><td>' + esc(p.bankAccountNumber) + '</td></tr>' +
+    '</table></div>';
+}
+
+function showPreview(inv) {
+  previewInvoice = inv;
+  $('invoiceSheet').innerHTML = invoiceHtml(inv);
+  $('previewCard').style.display = '';
+  $('previewLabel').textContent = inv.number + ' — ' + inv.client.name;
+  $('printHint').textContent = '存 PDF 时建议文件名：Invoice ' + inv.number + ' - ' + inv.client.name + '.pdf';
+  $('previewCard').scrollIntoView({ behavior: 'smooth' });
+}
+
+$('printBtn').addEventListener('click', () => {
+  if (!previewInvoice) return;
+  const old = document.title;
+  document.title = 'Invoice ' + previewInvoice.number + ' - ' + previewInvoice.client.name;
+  window.print();
+  document.title = old;
+});
+
+function activateTab(tabId) {
+  const btn = document.querySelector('#tabNav button[data-tab="' + tabId + '"]');
+  if (!btn) return;
+  document.querySelectorAll('#tabNav button').forEach(b => b.classList.toggle('active', b === btn));
+  document.querySelectorAll('section.tab').forEach(s => s.classList.toggle('active', s.id === 'tab-' + tabId));
+}
+
+function formatInvoiceNumber(seq) {
+  const n = Math.max(0, parseInt(seq, 10) || 0);
+  return (state.settings.invoicePrefix || '') + String(n).padStart(4, '0');
+}
+
+function parseInvoiceSeq(numberStr) {
+  const prefix = state.settings.invoicePrefix || '';
+  let s = String(numberStr == null ? '' : numberStr);
+  if (prefix && s.indexOf(prefix) === 0) s = s.slice(prefix.length);
+  const m = s.match(/(\d+)\s*$/);
+  return m ? parseInt(m[1], 10) : 0;
+}
+
+function invoiceMatchesClient(inv, clientId) {
+  if (!clientId) return true;
+  const c = getClient(clientId);
+  if (!c) return false;
+  if (inv.client.ndisNumber && c.ndisNumber) return inv.client.ndisNumber === c.ndisNumber;
+  return inv.client.name === c.name;
+}
+
+function getFilteredArchiveInvoices() {
+  const q = $('archiveSearch').value.trim().toLowerCase();
+  const clientId = $('archiveClient').value;
+  const from = $('archiveFrom').value;
+  const to = $('archiveTo').value;
+
+  let list = state.invoices.slice().sort((a, b) => {
+    const d = b.invoiceDate.localeCompare(a.invoiceDate);
+    return d !== 0 ? d : b.number.localeCompare(a.number);
+  });
+
+  return list.filter(inv => {
+    if (!invoiceMatchesClient(inv, clientId)) return false;
+    if (from && inv.invoiceDate < from) return false;
+    if (to && inv.invoiceDate > to) return false;
+    if (q) {
+      const hay = (inv.number + ' ' + inv.client.name + ' ' + money(inv.total)).toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  });
+}
+
+function renderArchive() {
+  const sel = $('archiveClient');
+  const prevClient = sel.value;
+  sel.innerHTML = '<option value="">全部</option>' +
+    state.clients.map(c => '<option value="' + c.id + '">' + esc(c.name) + '</option>').join('');
+  if (prevClient === '' || state.clients.some(c => c.id === prevClient)) sel.value = prevClient;
+
+  const box = $('archiveList');
+  const voidBox = $('archiveVoidedList');
+  const filtered = getFilteredArchiveInvoices();
+  const active = filtered.filter(inv => !inv.voided);
+  const voided = state.invoices.filter(inv => inv.voided)
+    .sort((a, b) => {
+      const d = b.invoiceDate.localeCompare(a.invoiceDate);
+      return d !== 0 ? d : b.number.localeCompare(a.number);
+    });
+
+  const prefix = state.settings.invoicePrefix || '';
+  const activeTotal = state.invoices.filter(inv => !inv.voided).length;
+
+  if (!activeTotal) {
+    box.innerHTML = '<p class="muted">还没有有效的 invoice。</p>';
+  } else if (!active.length) {
+    box.innerHTML = '<p class="muted">没有符合筛选条件的有效 invoice。</p>';
+  } else {
+    let html = '<table class="list"><tr><th>编号</th><th>客人</th><th>Invoice 日期</th><th>到期日</th>' +
+      '<th>金额</th><th></th></tr>';
+    for (const inv of active) {
+      const seq = parseInvoiceSeq(inv.number);
+      html += '<tr><td style="white-space:nowrap;">' +
+        '<span class="muted">' + esc(prefix) + '</span>' +
+        '<input type="number" min="0" step="1" class="arch-seq" data-id="' + inv.id + '" value="' + seq +
+        '" style="width:5.5em;margin:0 4px;padding:4px 6px;border:1px solid var(--border);border-radius:6px;">' +
+        '<button type="button" class="ghost" data-save-num="' + inv.id + '">保存编号</button></td>' +
+        '<td>' + esc(inv.client.name) + '</td>' +
+        '<td>' + fmtDate(inv.invoiceDate) + '</td>' +
+        '<td>' + fmtDate(inv.dueDate) + '</td>' +
+        '<td class="total-cell">' + money(inv.total) + '</td>' +
+        '<td style="white-space:nowrap;"><button class="ghost" data-view="' + inv.id + '">查看 / 打印</button> ' +
+        '<button class="ghost" data-export="' + inv.id + '">导出</button> ' +
+        '<button class="danger" data-void="' + inv.id + '">作废</button></td></tr>';
+    }
+    box.innerHTML = html + '</table>';
+  }
+
+  if (!voided.length) {
+    voidBox.innerHTML = '<p class="muted">没有已作废的 invoice。</p>';
+  } else {
+    let vhtml = '<table class="list"><tr><th>编号</th><th>客人</th><th>Invoice 日期</th><th>金额</th><th></th></tr>';
+    for (const inv of voided) {
+      vhtml += '<tr><td>' + esc(inv.number) + '</td>' +
+        '<td>' + esc(inv.client.name) + '</td>' +
+        '<td>' + fmtDate(inv.invoiceDate) + '</td>' +
+        '<td class="total-cell">' + money(inv.total) + '</td>' +
+        '<td style="white-space:nowrap;"><button class="ghost" data-view="' + inv.id + '">查看</button> ' +
+        '<button class="primary" data-restore="' + inv.id + '">恢复</button></td></tr>';
+    }
+    voidBox.innerHTML = vhtml + '</table>';
+  }
+}
+
+/* ---------- PDF export (html2pdf + directory picker) ---------- */
+let html2pdfLoadPromise = null;
+
+function loadHtml2Pdf() {
+  if (typeof window.html2pdf === 'function') return Promise.resolve();
+  if (html2pdfLoadPromise) return html2pdfLoadPromise;
+  html2pdfLoadPromise = new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js';
+    s.onload = () => {
+      if (typeof window.html2pdf === 'function') resolve();
+      else reject(new Error('html2pdf missing after load'));
+    };
+    s.onerror = () => {
+      html2pdfLoadPromise = null;
+      reject(new Error('html2pdf CDN failed'));
+    };
+    document.head.appendChild(s);
+  });
+  return html2pdfLoadPromise;
+}
+
+function pdfFilename(inv) {
+  const raw = 'Invoice ' + inv.number + ' - ' + inv.client.name + '.pdf';
+  return raw.replace(/[\\/:*?"<>|]/g, '_');
+}
+
+function downloadBlob(blob, filename) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+async function buildInvoicePdfBlob(inv) {
+  await loadHtml2Pdf();
+  const el = document.createElement('div');
+  el.className = 'invoice-sheet';
+  el.innerHTML = invoiceHtml(inv);
+  el.style.position = 'fixed';
+  el.style.left = '-10000px';
+  el.style.top = '0';
+  el.style.boxShadow = 'none';
+  document.body.appendChild(el);
+  try {
+    const opt = {
+      margin: [10, 10, 10, 10],
+      image: { type: 'jpeg', quality: 0.98 },
+      html2canvas: { scale: 2, useCORS: true },
+      jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+    };
+    return await html2pdf().set(opt).from(el).outputPdf('blob');
+  } finally {
+    el.remove();
+  }
+}
+
+async function writeBlobToDirectory(dirHandle, filename, blob) {
+  const fileHandle = await dirHandle.getFileHandle(filename, { create: true });
+  const writable = await fileHandle.createWritable();
+  await writable.write(blob);
+  await writable.close();
+}
+
+async function pickExportDirectory() {
+  if (typeof window.showDirectoryPicker !== 'function') return null;
+  try {
+    return await window.showDirectoryPicker({ mode: 'readwrite' });
+  } catch (err) {
+    if (err && (err.name === 'AbortError' || err.name === 'NotAllowedError')) {
+      return undefined; // cancelled / denied — caller may fall back to download
+    }
+    throw err;
+  }
+}
+
+async function exportInvoicePdf(inv, directoryHandle) {
+  if (!inv || inv.voided) return;
+  const filename = pdfFilename(inv);
+  const blob = await buildInvoicePdfBlob(inv);
+  if (directoryHandle) {
+    await writeBlobToDirectory(directoryHandle, filename, blob);
+    return 'dir';
+  }
+  downloadBlob(blob, filename);
+  return 'download';
+}
+
+async function exportInvoices(list) {
+  const invoices = (list || []).filter(inv => inv && !inv.voided);
+  if (!invoices.length) {
+    alert('当前筛选结果里没有可导出的有效 invoice。');
+    return;
+  }
+
+  toast('正在生成 PDF…');
+  const files = [];
+  for (const inv of invoices) {
+    files.push({ inv, filename: pdfFilename(inv), blob: await buildInvoicePdfBlob(inv) });
+  }
+
+  let dirHandle = null;
+  if (typeof window.showDirectoryPicker === 'function') {
+    dirHandle = await pickExportDirectory();
+    if (dirHandle === undefined) {
+      // picker cancelled after generation → download fallback
+      dirHandle = null;
+    }
+  }
+
+  if (dirHandle) {
+    for (const f of files) {
+      await writeBlobToDirectory(dirHandle, f.filename, f.blob);
+    }
+    toast('已导出 ' + files.length + ' 份 PDF 到所选文件夹');
+    return;
+  }
+
+  for (const f of files) downloadBlob(f.blob, f.filename);
+  toast('已下载 ' + files.length + ' 份 PDF，请手动移到工作文件夹（如 Work Invoice for Robert Peters）');
+}
+
+['archiveSearch', 'archiveClient', 'archiveFrom', 'archiveTo'].forEach(id => {
+  $(id).addEventListener('input', renderArchive);
+  $(id).addEventListener('change', renderArchive);
+});
+
+$('archiveExportFilteredBtn').addEventListener('click', () => {
+  const list = getFilteredArchiveInvoices().filter(inv => !inv.voided);
+  exportInvoices(list).catch(err => {
+    console.error(err);
+    alert('导出失败：' + (err && err.message ? err.message : '未知错误'));
+  });
+});
+
+$('archiveList').addEventListener('click', e => {
+  const v = e.target.dataset.view, vo = e.target.dataset.void, ex = e.target.dataset.export;
+  const sn = e.target.dataset.saveNum;
+  if (sn) {
+    const inv = state.invoices.find(i => i.id === sn);
+    if (!inv || inv.voided) return;
+    const input = e.target.closest('tr').querySelector('input.arch-seq');
+    const seq = Math.max(0, parseInt(input && input.value, 10) || 0);
+    inv.number = formatInvoiceNumber(seq);
+    saveState(); renderAll();
+    if (previewInvoice && previewInvoice.id === inv.id) showPreview(inv);
+    toast('编号已改为 ' + inv.number);
+    return;
+  }
+  if (v) {
+    const inv = state.invoices.find(i => i.id === v);
+    if (!inv) return;
+    showPreview(inv);
+    activateTab('invoice');
+    toast('已打开预览');
+  }
+  if (ex) {
+    const inv = state.invoices.find(i => i.id === ex);
+    if (!inv || inv.voided) return;
+    exportInvoices([inv]).catch(err => {
+      console.error(err);
+      alert('导出失败：' + (err && err.message ? err.message : '未知错误'));
+    });
+  }
+  if (vo) {
+    const inv = state.invoices.find(i => i.id === vo);
+    if (!inv) return;
+    if (!confirm('作废 ' + inv.number + '？它会从上面的记录里消失，sessions 回到待开票。可在下方「已作废」区恢复。')) return;
+    inv.sessionIds = state.sessions.filter(s => s.invoiceId === inv.id).map(s => s.id);
+    inv.voided = true;
+    state.sessions.forEach(s => { if (s.invoiceId === inv.id) s.invoiceId = null; });
+    saveState(); renderAll(); toast('已作废，已移到下方列表');
+  }
+});
+
+$('archiveVoidedList').addEventListener('click', e => {
+  const v = e.target.dataset.view, rs = e.target.dataset.restore;
+  if (v) {
+    const inv = state.invoices.find(i => i.id === v);
+    if (!inv) return;
+    showPreview(inv);
+    activateTab('invoice');
+    toast('已打开预览（已作废）');
+    return;
+  }
+  if (rs) {
+    const inv = state.invoices.find(i => i.id === rs);
+    if (!inv) return;
+    inv.voided = false;
+    let rebound = 0, skipped = 0;
+    const ids = inv.sessionIds || [];
+    for (const sid of ids) {
+      const s = state.sessions.find(x => x.id === sid);
+      if (!s) continue;
+      if (s.invoiceId == null) { s.invoiceId = inv.id; rebound++; }
+      else if (s.invoiceId !== inv.id) skipped++;
+    }
+    saveState(); renderAll();
+    let msg = '已恢复 ' + inv.number + '，已回到上方记录';
+    if (rebound) msg += '（绑回 ' + rebound + ' 条 session）';
+    if (skipped) msg += '；' + skipped + ' 条已被其他单占用';
+    if (!ids.length) msg += '（旧单无 session 记录，仅恢复状态）';
+    toast(msg);
+  }
+});
+
+/* ================= settings tab ================= */
+const SETTING_FIELDS = [
+  ['setName', 'providerName'], ['setAbn', 'abn'], ['setAddress', 'address'],
+  ['setEmail', 'email'], ['setPhone', 'phone'],
+  ['setBankName', 'bankAccountName'], ['setBsb', 'bankBsb'], ['setAccNo', 'bankAccountNumber'],
+  ['setPrefix', 'invoicePrefix']
+];
+const RATE_FIELDS = [
+  ['setRateWeekday', 'weekday'], ['setRateEvening', 'weekdayEvening'],
+  ['setRateNight', 'weekdayNight'],
+  ['setRateSaturday', 'saturday'], ['setRateSunday', 'sunday'],
+  ['setRatePH', 'publicHoliday'], ['setRateTravel', 'travelPerKm']
+];
+const LI_COMMUNITY_FIELDS = [
+  ['setLiCWeekday', 'weekday'], ['setLiCEvening', 'weekdayEvening'],
+  ['setLiCSaturday', 'saturday'], ['setLiCSunday', 'sunday'],
+  ['setLiCPH', 'publicHoliday'], ['setLiCTravel', 'travel']
+];
+const LI_DAILY_FIELDS = [
+  ['setLiDWeekday', 'weekday'], ['setLiDEvening', 'weekdayEvening'],
+  ['setLiDNight', 'weekdayNight'],
+  ['setLiDSaturday', 'saturday'], ['setLiDSunday', 'sunday'],
+  ['setLiDPH', 'publicHoliday'], ['setLiDTravel', 'travel']
+];
+
+function renderSettings() {
+  const st = state.settings;
+  SETTING_FIELDS.forEach(([id, key]) => $(id).value = st[key]);
+  RATE_FIELDS.forEach(([id, key]) => $(id).value = st.rates[key]);
+  $('setSvcCommunity').value = st.supportServiceNames.community;
+  $('setSvcDailyLife').value = st.supportServiceNames.dailyLife;
+  LI_COMMUNITY_FIELDS.forEach(([id, key]) => $(id).value = st.supportLineItems.community[key] || '');
+  LI_DAILY_FIELDS.forEach(([id, key]) => $(id).value = st.supportLineItems.dailyLife[key] || '');
+  $('setNextNo').value = st.nextInvoiceNumber;
+  $('setTerms').value = st.paymentTermsDays;
+}
+
+$('setSaveBtn').addEventListener('click', () => {
+  const st = state.settings;
+  SETTING_FIELDS.forEach(([id, key]) => st[key] = $(id).value.trim());
+  RATE_FIELDS.forEach(([id, key]) => { const v = Number($(id).value); if (!isNaN(v)) st.rates[key] = v; });
+  st.supportServiceNames.community = $('setSvcCommunity').value.trim();
+  st.supportServiceNames.dailyLife = $('setSvcDailyLife').value.trim();
+  LI_COMMUNITY_FIELDS.forEach(([id, key]) => st.supportLineItems.community[key] = $(id).value.trim());
+  LI_DAILY_FIELDS.forEach(([id, key]) => st.supportLineItems.dailyLife[key] = $(id).value.trim());
+  st.lineItems = Object.assign({}, st.supportLineItems.community);
+  st.serviceName = st.supportServiceNames.community;
+  const nn = parseInt($('setNextNo').value, 10);
+  if (!isNaN(nn) && nn >= 0) st.nextInvoiceNumber = nn;
+  const tm = parseInt($('setTerms').value, 10);
+  if (!isNaN(tm) && tm >= 0) st.paymentTermsDays = tm;
+  saveState(); renderAll(); syncSupportHint(); toast('设置已保存');
+});
+
+/* ---------- backup ---------- */
+$('exportBtn').addEventListener('click', () => {
+  const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'ndis-invoice-backup-' + todayStr() + '.json';
+  a.click();
+  URL.revokeObjectURL(a.href);
+  toast('备份已导出');
+});
+$('importBtn').addEventListener('click', () => $('importFile').click());
+['connectDiskBtn', 'connectDiskBtn2'].forEach(function (id) {
+  const el = $(id);
+  if (el) el.addEventListener('click', pickDiskLedger);
+});
+$('importFile').addEventListener('change', e => {
+  const f = e.target.files[0];
+  if (!f) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const data = JSON.parse(reader.result);
+      if (!data || typeof data !== 'object' || !data.settings ||
+          !Array.isArray(data.clients) || !Array.isArray(data.sessions) || !Array.isArray(data.invoices)) {
+        throw new Error('bad shape');
+      }
+      if (!confirm('导入会覆盖现有全部资料，确定吗？')) { e.target.value = ''; return; }
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+      state = loadState();
+      saveState();
+      clearClientForm(); clearSessionForm(); renderAll();
+      toast('备份已导入');
+    } catch (err) {
+      alert('这个文件不是有效的备份，没有做任何更改。');
+    }
+    e.target.value = '';
+  };
+  reader.readAsText(f);
+});
+
+/* ================= render all ================= */
+function renderAll() {
+  fillClientSelect($('sessClient'), true);
+  fillClientSelect($('invClient'), true);
+  renderClients();
+  renderSessions();
+  renderInvoicePick();
+  renderArchive();
+  renderSettings();
+  renderStats();
+  updateMigrateHint();
+}
+
+/* ================= init ================= */
+clearSessionForm();
+$('invDate').value = todayStr();
+$('invDue').value = addDays(todayStr(), state.settings.paymentTermsDays);
+renderAll();
+updateLedgerBanner();
+connectLedger();
+</script>
+</body>
+</html>
