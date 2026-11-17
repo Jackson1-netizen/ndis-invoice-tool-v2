@@ -1075,9 +1075,29 @@ function physioSessionErrors(session) {
   return errs;
 }
 
+// Travel-time quantity shown on the invoice so that (qty x unit price, rounded half-up to the cent) == amount,
+// while the amount itself is minutes/60 x rate (half-up to the cent). Exact integer arithmetic, no float drift.
+// Tries 4..8 decimals rounded; only at an exact half-cent tie does it fall back to the ceil/floor digit.
+// Verified to reconcile for every minute 1-30 at every rate $0.01-$92.00 (max 6 decimals; $92: 4-5 decimals).
+function travelQty(minutes, rate) {
+  const cents = Math.round(rate * 100);
+  const amountCents = Math.floor((2 * minutes * cents + 60) / 120);
+  const centsOf = (qInt, f) => Math.floor((2 * qInt * cents + f) / (2 * f));
+  const tries = [];
+  for (let d = 4; d <= 8; d++) tries.push([d, 'round']);
+  for (let d = 4; d <= 8; d++) tries.push([d, 'ceil'], [d, 'floor']);
+  for (const [d, how] of tries) {
+    const f = Math.pow(10, d);
+    const qInt = how === 'round' ? Math.floor((2 * minutes * f + 60) / 120)
+      : how === 'ceil' ? Math.ceil(minutes * f / 60) : Math.floor(minutes * f / 60);
+    if (centsOf(qInt, f) === amountCents) return { qty: qInt / f, decimals: d, amount: amountCents / 100 };
+  }
+  return { qty: round2(minutes / 60), decimals: 2, amount: amountCents / 100 };
+}
+
 // Same line shape as sessionLines + startTime/endTime/claimType/gst/rateKind.
 // Travel time: own rate (rates.travel, capped $92/h) and amount from EXACT minutes (25 min x $92 = $38.33);
-// qty is the hours shown on the invoice. Non-labour: km x $/km, parking/tolls at actual cost (qty 1).
+// qty is shown with enough decimals (travelQty) that qty x price reconciles to the amount (0.41667 h). Non-labour: km x $/km, parking/tolls at actual cost (qty 1).
 function physioLines(session, settings) {
   const ph = (settings.physio || DEFAULT_STATE.settings.physio);
   const r = ph.rates, li = ph.lineItems;
@@ -1095,8 +1115,10 @@ function physioLines(session, settings) {
   function travelLine(label, minutes, s, e) {
     if (!(minutes > 0)) return;
     const rate = Number(r.travel); // never the direct-service rate
+    const t = travelQty(minutes, rate);
     push('travel', PHYSIO_ITEM_NAME.travel + ' (' + label + ', ' + minutes + ' min)', s, e,
-      round2(minutes / 60), 'h', round2(minutes / 60 * rate), rate);
+      t.qty, 'h', t.amount, rate);
+    lines[lines.length - 1].qtyDecimals = t.decimals;
   }
   const content = (session.physioDescription || '').trim();
   const mainDesc = PHYSIO_ITEM_NAME[claim] + (content ? ': ' + content : '');
@@ -1759,7 +1781,7 @@ function physioInvoiceHtml(inv) {
     rows += '<tr><td class="item">' + esc(l.lineItem) + '</td><td class="nw">' + fmtDate(l.serviceDate) + '</td>' +
       '<td class="nw">' + time + '</td><td>' + esc(l.description) + '</td>' +
       '<td>' + esc(l.claimType) + '</td>' +
-      '<td class="num">' + (l.unit === 'each' ? '1 each' : l.qty.toFixed(l.unit === 'km' ? 1 : 2) + (l.unit === 'km' ? ' km' : '')) + '</td>' +
+      '<td class="num">' + (l.unit === 'each' ? '1 each' : l.qty.toFixed(l.qtyDecimals || (l.unit === 'km' ? 1 : 2)) + (l.unit === 'km' ? ' km' : '')) + '</td>' +
       '<td class="num">' + money(l.rate) + '</td>' +
       '<td class="num">GST free</td>' +
       '<td class="num">' + money(l.amount) + '</td></tr>';

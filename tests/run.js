@@ -234,9 +234,9 @@ async function printPdf(page, file) {
     check('physio: invoiceType=physio', inv.invoiceType === 'physio');
     const L = inv.lines.map(l => [l.lineItem, l.claimType, l.startTime, l.endTime, l.qty, l.unit, l.rate, l.gst, l.amount]);
     const expect = [
-      ['15_055_0128_1_3', 'Provider Travel (_PT)', '09:35', '10:00', 0.42, 'h', 92, 0, 38.33],
+      ['15_055_0128_1_3', 'Provider Travel (_PT)', '09:35', '10:00', 0.41667, 'h', 92, 0, 38.33],
       ['15_055_0128_1_3', 'Direct', '10:00', '11:00', 1, 'h', 183.99, 0, 183.99],
-      ['15_055_0128_1_3', 'Provider Travel (_PT)', '11:00', '11:20', 0.33, 'h', 92, 0, 30.67],
+      ['15_055_0128_1_3', 'Provider Travel (_PT)', '11:00', '11:20', 0.33333, 'h', 92, 0, 30.67],
       ['15_799_0128_1_3', 'Non-labour travel', '', '', 12.4, 'km', 0.99, 0, 12.28],
       ['15_799_0128_1_3', 'Non-labour travel', '', '', 1, 'each', 8.5, 0, 8.5],
       ['15_055_0128_1_3_NF', 'NF2F', '14:00', '14:30', 0.5, 'h', 183.99, 0, 92],
@@ -290,6 +290,39 @@ async function printPdf(page, file) {
       check('cap: invoice generation blocked when ' + k + ' rate = ' + v, r && /上限/.test(dialogs[dialogs.length - 1]), dialogs.slice(-1));
     }
     // at the cap is allowed (already proven by the 183.99 / 92 / 0.99 invoice above)
+
+    /* ---------- 4a. travel qty reconciles: displayed qty x unit price (to the cent) == amount ---------- */
+    // Independent check in exact decimal arithmetic (BigInt) from the strings printed on the invoice.
+    const centsFromPrinted = (qtyStr, rateCents) => {
+      const [ip, fp = ''] = qtyStr.split('.'); const f = 10n ** BigInt(fp.length);
+      const qInt = BigInt(ip + fp); return Number((2n * qInt * BigInt(rateCents) + f) / (2n * f));
+    };
+    const rec = await page.evaluate(() => {
+      const out = [];
+      for (const rate of [92, 91.5, 80, 75.25, 50]) for (let m = 1; m <= 30; m++) {
+        const ses = { kind: 'physio', claimType: 'direct', date: '2026-12-20', startTime: '10:00', endTime: '11:00', travelOutMin: m, travelReturnMin: 0 };
+        const st = JSON.parse(JSON.stringify(state.settings)); st.physio.rates.travel = rate;
+        const l = physioLines(ses, st)[0];
+        const sheet = document.createElement('div');
+        sheet.innerHTML = physioInvoiceHtml({ provider: {}, client: {}, lines: [l], subtotal: l.amount, gst: 0, total: l.amount, payments: 0, amountDue: l.amount });
+        const tds = sheet.querySelectorAll('.inv-items tr')[1].querySelectorAll('td');
+        out.push({ m, rate, qtyStr: tds[5].textContent, priceStr: tds[6].textContent, amountStr: tds[8].textContent, amount: l.amount });
+      }
+      return out;
+    });
+    const recFail = [];
+    for (const x of rec) {
+      const rateCents = Math.round(Number(x.priceStr.replace(/[$,]/g, '')) * 100);
+      const amountCents = Math.round(Number(x.amountStr.replace(/[$,]/g, '')) * 100);
+      const expectCents = Number((2n * BigInt(x.m) * BigInt(Math.round(x.rate * 100)) + 60n) / 120n); // minutes/60 x rate
+      if (centsFromPrinted(x.qtyStr, rateCents) !== amountCents || amountCents !== expectCents) recFail.push(x);
+    }
+    const at92 = rec.filter(x => x.rate === 92);
+    check('reconcile: every minute 1-30 at $92/h: printed qty x price = printed amount = minutes/60 x $92',
+      at92.length === 30 && !recFail.some(x => x.rate === 92), recFail.filter(x => x.rate === 92));
+    check('reconcile: also at $91.50, $80, $75.25, $50 (1-30 min)', recFail.length === 0, recFail);
+    check('reconcile: 25 min at $92 prints 0.41667 / $92.00 / $38.33',
+      JSON.stringify(at92[24]) === JSON.stringify({ m: 25, rate: 92, qtyStr: '0.41667', priceStr: '$92.00', amountStr: '$38.33', amount: 38.33 }), at92[24]);
 
     /* ---------- 4b. travel rules ---------- */
     const tr = await page.evaluate(() => {
