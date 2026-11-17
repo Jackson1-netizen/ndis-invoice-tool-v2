@@ -413,22 +413,139 @@ async function printPdf(page, file) {
     });
     check('parking: $22.40 actual cost allowed (not capped at $0.99)', pkOk === 22.4, pkOk);
 
-    /* ---------- 5. overlap blocking ---------- */
+    /* ---------- 5. overlap blocking (same category; cross-category same day is blocked earlier, see 6) ---------- */
     const ov = await page.evaluate(() => {
       const cid = state.clients[0].id;
-      // support session 09:00-12:15 on 2026-11-11 already invoiced; physio 12:00-13:00 with travel overlaps it
-      state.sessions.push({ id: 'ov1', invoiceId: null, clientId: cid, kind: 'physio', claimType: 'direct', date: '2026-11-11',
-        startTime: '12:30', endTime: '13:30', travelOutMin: 20, travelReturnMin: 0, km: 0 });
+      state.sessions.push({ id: 'ov0', invoiceId: null, clientId: cid, kind: 'physio', claimType: 'direct', date: '2026-11-25',
+        startTime: '10:00', endTime: '11:00', travelOutMin: 0, travelReturnMin: 0, km: 0 });
+      state.sessions.push({ id: 'ov1', invoiceId: null, clientId: cid, kind: 'physio', claimType: 'direct', date: '2026-11-25',
+        startTime: '11:15', endTime: '12:15', travelOutMin: 30, travelReturnMin: 0, km: 0 });
+      renderAll();
       const n = state.invoices.length;
       $('invKind').value = 'physio'; $('invKind').dispatchEvent(new Event('change'));
-      $('invClient').value = cid; renderInvoicePick(); $('invGenBtn').click();
+      $('invClient').value = cid; renderInvoicePick();
+      document.querySelectorAll('.pickSess').forEach(x => { x.checked = ['ov0', 'ov1'].includes(x.value); });
+      $('invGenBtn').click();
       const blocked = state.invoices.length === n;
-      state.sessions = state.sessions.filter(s => s.id !== 'ov1');
+      state.sessions = state.sessions.filter(s => !['ov0', 'ov1'].includes(s.id)); renderAll();
       return blocked;
     });
     check('overlap: physio session overlapping (incl. travel) another session is blocked', ov && /重叠/.test(dialogs[dialogs.length - 1]), dialogs.slice(-1));
+
+    /* ---------- 6. HARD same-day cross-category block ---------- */
+    const sd = await page.evaluate(() => {
+      const cid = state.clients[0].id, out = {};
+      const physioCount = () => state.sessions.filter(s => s.kind === 'physio').length;
+      const supportCount = () => state.sessions.filter(s => s.kind !== 'physio').length;
+      const dlg = []; const realAlert = window.alert; window.alert = m => dlg.push(String(m));
+      clearSessionForm();
+      // a) physio on 2026-11-13 (open support 10:00-14:00) at 18:00-19:00: no overlap, still blocked
+      $('sessClient').value = cid; $('sessClient').dispatchEvent(new Event('change'));
+      $('sessKind').value = 'physio'; $('sessKind').dispatchEvent(new Event('change'));
+      $('sessDate').value = '2026-11-13'; $('sessDate').dispatchEvent(new Event('change'));
+      $('sessStart').value = '18:00'; $('sessEnd').value = '19:00';
+      out.aDisabled = $('sessSaveBtn').disabled;
+      out.aMsg = $('sessSameDayMsg').textContent; out.aShown = $('sessSameDayMsg').style.display !== 'none';
+      out.aPopup = dlg.slice();
+      const p0 = physioCount();
+      $('sessSaveBtn').click(); // disabled -> no-op
+      $('sessSaveBtn').disabled = false; $('sessSaveBtn').click(); // forced -> handler still refuses
+      out.aSaved = physioCount() !== p0; out.aForcedPopup = dlg[dlg.length - 1];
+      // b) switching to a free date re-enables the button
+      $('sessDate').value = '2026-11-26'; $('sessDate').dispatchEvent(new Event('change'));
+      out.bEnabled = !$('sessSaveBtn').disabled && $('sessSameDayMsg').style.display === 'none';
+      $('sessSaveBtn').click(); out.bSaved = physioCount() === p0 + 1;
+      // c) support on a date that already has physio (2026-11-26) is blocked
+      clearSessionForm();
+      $('sessClient').value = cid;
+      $('sessKind').value = 'support'; $('sessKind').dispatchEvent(new Event('change'));
+      $('sessDate').value = '2026-11-26'; $('sessDate').dispatchEvent(new Event('change'));
+      $('sessStart').value = '06:00'; $('sessEnd').value = '07:00';
+      const s0 = supportCount();
+      out.cDisabled = $('sessSaveBtn').disabled; out.cMsg = $('sessSameDayMsg').textContent;
+      $('sessSaveBtn').disabled = false; $('sessSaveBtn').click(); out.cSaved = supportCount() !== s0;
+      // d) invoiced-only evidence: a non-void physio invoice line on 2026-11-27 (its session deleted) blocks support
+      state.invoices.push({ id: 'pinv', number: 'INV-9001', invoiceType: 'physio', voided: false, sessionIds: [],
+        client: { name: state.clients[0].name, ndisNumber: state.clients[0].ndisNumber }, lines: [{ serviceDate: '2026-11-27', amount: 1 }] });
+      state.invoices.push({ id: 'vinv', number: 'INV-9002', invoiceType: 'physio', voided: true, sessionIds: [],
+        client: { name: state.clients[0].name, ndisNumber: state.clients[0].ndisNumber }, lines: [{ serviceDate: '2026-11-28', amount: 1 }] });
+      out.dInvoice = sameDayConflicts(cid, '2026-11-27', 'support', null);
+      out.dVoid = sameDayConflicts(cid, '2026-11-28', 'support', null);
+      out.dOtherKindSameCat = sameDayConflicts(cid, '2026-11-27', 'physio', null);
+      state.invoices = state.invoices.filter(i => !['pinv', 'vinv'].includes(i.id));
+      // e) editing an existing physio session onto a support day is blocked
+      const ps = state.sessions.find(s => s.kind === 'physio' && s.date === '2026-11-26');
+      renderAll();
+      document.querySelector('#sessList [data-edit="' + ps.id + '"]').click();
+      $('sessDate').value = '2026-11-14'; $('sessDate').dispatchEvent(new Event('change'));
+      out.eDisabled = $('sessSaveBtn').disabled;
+      $('sessSaveBtn').disabled = false; $('sessSaveBtn').click();
+      out.eUnchanged = state.sessions.find(s => s.id === ps.id).date === '2026-11-26';
+      clearSessionForm();
+      // f) invoice picker: legacy cross-category session pair on one date cannot be selected or invoiced
+      state.sessions.push({ id: 'xp', invoiceId: null, clientId: cid, kind: 'physio', claimType: 'direct', date: '2026-11-15',
+        startTime: '15:00', endTime: '16:00', travelOutMin: 0, travelReturnMin: 0, km: 0 });
+      renderAll();
+      $('invKind').value = 'physio'; $('invKind').dispatchEvent(new Event('change'));
+      $('invClient').value = cid; renderInvoicePick();
+      const box = document.querySelector('.pickSess[value="xp"]');
+      out.fDisabled = !!box && box.disabled && !box.checked;
+      out.fRowMsg = $('invSessionPick').innerText;
+      $('invKind').value = 'support'; $('invKind').dispatchEvent(new Event('change')); renderInvoicePick();
+      state.sessions.push({ id: 'xs', invoiceId: null, clientId: cid, date: '2026-11-15', startTime: '07:00', endTime: '08:00',
+        km: 0, isPublicHoliday: false, isNonFaceToFace: false, supportType: 'community' });
+      renderInvoicePick();
+      const sup = state.sessions.find(s => s.id === 'xs');
+      const sbox = sup && document.querySelector('.pickSess[value="' + sup.id + '"]');
+      out.fSupportDisabled = !!sbox && sbox.disabled;
+      const n = state.invoices.length;
+      if (sbox) { sbox.disabled = false; sbox.checked = true; }
+      $('invDate').value = '2026-11-30'; $('invGenBtn').click();
+      out.fNotGenerated = state.invoices.length === n;
+      out.fPopup = dlg[dlg.length - 1];
+      state.sessions = state.sessions.filter(s => !['xp', 'xs', ps.id].includes(s.id)); renderAll();
+      window.alert = realAlert;
+      return out;
+    });
+    const zh1 = '這一天已有 support work，不能加物理治療', zh2 = '這一天已有物理治療，不能加 support work';
+    check('same-day: physio on a support day (no overlap) disables Save', sd.aDisabled && sd.aShown, sd);
+    check('same-day: message zh+en (這一天已有 support work，不能加物理治療)', sd.aMsg.includes(zh1) && /already has support work/.test(sd.aMsg), sd.aMsg);
+    check('same-day: popup shown when date chosen', sd.aPopup.some(m => m.includes(zh1)), sd.aPopup);
+    check('same-day: forced click still refuses to save', !sd.aSaved && sd.aForcedPopup.includes(zh1), sd);
+    check('same-day: free date re-enables Save and saves', sd.bEnabled && sd.bSaved, sd);
+    check('same-day: support on a physio day blocked (這一天已有物理治療，不能加 support work)', sd.cDisabled && !sd.cSaved && sd.cMsg.includes(zh2) && /already has physiotherapy/.test(sd.cMsg), sd);
+    check('same-day: non-void invoice lines count; void invoices ignored; same category not blocked',
+      sd.dInvoice.length === 1 && /INV-9001/.test(sd.dInvoice[0]) && sd.dVoid.length === 0 && sd.dOtherKindSameCat.length === 0, sd);
+    check('same-day: editing a session onto a cross-category day is blocked', sd.eDisabled && sd.eUnchanged, sd);
+    check('same-day: picker disables cross-category same-day session (physio)', sd.fDisabled && sd.fRowMsg.includes(zh1), sd);
+    check('same-day: picker disables it on support side too, and generate refuses if forced', sd.fSupportDisabled && sd.fNotGenerated && sd.fPopup.includes(zh2), sd);
     check('physio: no page errors', !dialogs.some(d => d.startsWith('pageerror')), dialogs.filter(d => d.startsWith('pageerror')));
     await ctx.close();
+  }
+
+  /* ---------- 7. CLI tools/check_same_day.py (read-only) ---------- */
+  {
+    const tmp = fs.mkdtempSync(path.join(require('os').tmpdir(), 'sdcli-'));
+    const clean = path.join(tmp, 'v2.json'), bad = path.join(tmp, 'v2c.json');
+    fs.writeFileSync(clean, ledgerText);
+    const c = JSON.parse(ledgerText);
+    c.sessions.push({ id: 'x', clientId: c.clients[0].id, kind: 'physio', claimType: 'direct', date: '2026-11-13', startTime: '18:00', endTime: '19:00' });
+    fs.writeFileSync(bad, JSON.stringify(c));
+    const before = [clean, bad].map(f => fs.readFileSync(f, 'utf8'));
+    const run = args => { try { return { code: 0, out: execFileSync('python3', [path.join(ROOT, 'tools', 'check_same_day.py'), ...args], { encoding: 'utf8' }) }; }
+      catch (e) { return { code: e.status, out: String(e.stdout) }; } };
+    const r1 = run(['--v2', clean, '--v1', clean]);
+    const r2 = run(['--v2', bad, '--no-v1']);
+    const r3 = run(['--v2', clean, '--no-v1', '--client', c.clients[0].ndisNumber, '--date', '13/11/2026', '--type', 'physio']);
+    const r4 = run(['--v2', clean, '--no-v1', '--client', c.clients[0].name, '--date', '2026-11-12', '--type', 'physio']);
+    check('cli: clean ledgers -> exit 0', r1.code === 0 && /OK/.test(r1.out), r1);
+    check('cli: cross-category same day reported -> exit 2', r2.code === 2 && /CONFLICT/.test(r2.out) && /2026-11-13/.test(r2.out), r2);
+    check('cli: proposed physio on a support day -> BLOCKED exit 2 (zh+en)', r3.code === 2 && r3.out.includes('這一天已有 support work，不能加物理治療'), r3);
+    check('cli: proposed physio on a free day -> exit 0', r4.code === 0, r4);
+    check('cli: ledger files untouched', [clean, bad].map(f => fs.readFileSync(f, 'utf8')).join() === before.join());
+    check('cli: opens ledgers read-only ("rb" only, no write mode)', /open\(path, "rb"\)/.test(fs.readFileSync(path.join(ROOT, 'tools', 'check_same_day.py'), 'utf8'))
+      && !/open\([^)]*['"](w|a|r\+|wb|ab)['"]/.test(fs.readFileSync(path.join(ROOT, 'tools', 'check_same_day.py'), 'utf8')));
+    fs.rmSync(tmp, { recursive: true, force: true });
   }
 
   await browser.close();

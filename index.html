@@ -49,6 +49,8 @@
     font-size: 14px; opacity: 0; transition: opacity .3s; pointer-events: none; z-index: 50; }
   .toast.show { opacity: 1; }
   .ph-name { color: var(--green); font-size: 12px; }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  .sameday-block { margin-top: 10px; padding: 8px 12px; border-radius: 8px; background: #fef2f2; color: #991b1b; font-size: 13px; white-space: pre-line; }
   .voided { opacity: .45; text-decoration: line-through; }
   .total-cell { font-weight: 600; white-space: nowrap; }
   .stats-nav { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 14px; }
@@ -215,6 +217,7 @@
       <button class="primary" id="sessSaveBtn">保存 Session</button>
       <button class="ghost" id="sessCancelBtn" style="display:none;">取消编辑</button>
     </div>
+    <div class="sameday-block" id="sessSameDayMsg" style="display:none;"></div>
     <div class="hint physio-only">Physiotherapy：一个小时价 × 时数，不分平日周末。Travel 时间每程最多 30 分钟，和服务同一个 item（15_055_0128_1_3），claim type 选 Provider Travel，上限 $92/h，时数四舍五入到 0.01 小时（25 分钟 = 0.42 h）。km（$0.99/km）和停车／过路费（实际金额）用 15_799_0128_1_3，只在 Direct service 时可收。NF2F / Cancellation 不收 travel。</div>
     <div class="hint support-only">默认面对面。勾选 Non face-to-face 用于电话等（发票只标注 Non face-to-face，不算开车）。周六/周日/假日整天一个价；平日按 白天 / 晚间 8pm 后 / 夜间 0–6am 自动拆开（Daily Life 有独立 Night code；Community 没有 Night code，0–6am 仍按 Daytime）。</div>
   </div>
@@ -1057,6 +1060,41 @@ const PHYSIO_ITEM_NAME = {
   parking: 'Provider travel - non-labour costs'
 };
 const isPhysio = session => !!session && session.kind === 'physio';
+// HARD rule: one participant cannot have support work and physiotherapy on the same date (any times).
+// Checked against sessions (open or invoiced) and non-void invoices of the participant.
+const sessionCategory = session => (isPhysio(session) ? 'physio' : 'support');
+const invoiceCategory = inv => (inv && inv.invoiceType === 'physio' ? 'physio' : 'support');
+function invoiceBelongsToClient(inv, client, sessions) {
+  if (!inv || !client) return false;
+  if ((inv.sessionIds || []).some(id => { const s = sessions.find(x => x.id === id); return s && s.clientId === client.id; })) return true;
+  const ic = inv.client || {};
+  if (client.ndisNumber && ic.ndisNumber) return String(ic.ndisNumber).trim() === String(client.ndisNumber).trim();
+  return !!client.name && !!ic.name && ic.name.trim().toLowerCase() === client.name.trim().toLowerCase();
+}
+function sameDayConflicts(clientId, date, kind, excludeSessionId) {
+  if (!clientId || !date) return [];
+  const other = kind === 'physio' ? 'support' : 'physio';
+  const label = other === 'physio' ? 'Physiotherapy' : 'Support work';
+  const out = [];
+  for (const s of state.sessions) {
+    if (s.id === excludeSessionId || s.clientId !== clientId || s.date !== date) continue;
+    if (sessionCategory(s) === other) out.push(label + ' session ' + s.startTime + '–' + s.endTime);
+  }
+  const client = state.clients.find(c => c.id === clientId);
+  for (const inv of state.invoices) {
+    if (!inv || inv.voided || invoiceCategory(inv) !== other) continue;
+    if (!(inv.lines || []).some(l => l.serviceDate === date)) continue;
+    if (!invoiceBelongsToClient(inv, client, state.sessions)) continue;
+    out.push(label + ' invoice ' + inv.number);
+  }
+  return Array.from(new Set(out));
+}
+function sameDayMessage(kind, date, conflicts) {
+  const head = kind === 'physio'
+    ? '這一天已有 support work，不能加物理治療。\nThis day already has support work – a physiotherapy session cannot be added.'
+    : '這一天已有物理治療，不能加 support work。\nThis day already has physiotherapy – support work cannot be added.';
+  return head + '\n' + fmtDate(date) + '：' + conflicts.join('；');
+}
 const physioClaimOf = session =>
   ['direct', 'nf2f', 'cancellation'].includes(session.claimType) ? session.claimType : 'direct';
 const minToTime = m => { m = ((m % 1440) + 1440) % 1440; return String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0'); };
@@ -1521,6 +1559,22 @@ function syncSupportHint() {
 }
 $('sessSupportType').addEventListener('change', syncSupportHint);
 
+let sessBlockShown = '';
+function syncSameDayBlock(popup) {
+  const kind = $('sessKind').value === 'physio' ? 'physio' : 'support';
+  const clientId = $('sessClient').value, date = $('sessDate').value;
+  const conflicts = sameDayConflicts(clientId, date, kind, editingSessionId);
+  const msg = conflicts.length ? sameDayMessage(kind, date, conflicts) : '';
+  $('sessSaveBtn').disabled = !!msg;
+  $('sessSameDayMsg').textContent = msg;
+  $('sessSameDayMsg').style.display = msg ? '' : 'none';
+  const key = msg ? clientId + '|' + date + '|' + kind : '';
+  if (popup && msg && key !== sessBlockShown) alert(msg);
+  sessBlockShown = key;
+  return msg;
+}
+['sessClient', 'sessDate', 'sessKind'].forEach(id => $(id).addEventListener('change', () => syncSameDayBlock(true)));
+
 function clearSessionForm() {
   editingSessionId = null;
   $('sessDate').value = todayStr();
@@ -1537,6 +1591,7 @@ function clearSessionForm() {
   syncSessKind();
   $('sessFormTitle').textContent = '添加 Session';
   $('sessCancelBtn').style.display = 'none';
+  syncSameDayBlock(false);
 }
 
 $('sessSaveBtn').addEventListener('click', () => {
@@ -1545,6 +1600,7 @@ $('sessSaveBtn').addEventListener('click', () => {
   if (!clientId) { alert('请先添加客人（"客人"页签）。'); return; }
   if (!date || !start || !end) { alert('日期、开始时间、结束时间都要填。'); return; }
   if (toMin(end) <= toMin(start)) { alert('结束时间要在开始时间之后（不支持跨午夜）。'); return; }
+  { const sdMsg = syncSameDayBlock(false); if (sdMsg) { alert(sdMsg); return; } }
   if ($('sessKind').value === 'physio') {
     const claimType = ['direct', 'nf2f', 'cancellation'].includes($('sessClaimType').value) ? $('sessClaimType').value : 'direct';
     const direct = claimType === 'direct';
@@ -1632,6 +1688,7 @@ $('sessList').addEventListener('click', e => {
     $('phName').textContent = VIC_HOLIDAYS[s.date] ? '(' + VIC_HOLIDAYS[s.date] + ')' : '';
     $('sessFormTitle').textContent = '编辑 Session';
     $('sessCancelBtn').style.display = '';
+    syncSameDayBlock(true);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
   if (del) {
@@ -1653,8 +1710,10 @@ function renderInvoicePick() {
   if (!open.length) { box.innerHTML = '<p class="muted">这个客人没有待开票的 ' + (wantPhysio ? 'Physiotherapy' : 'Support work') + ' session。</p>'; return; }
   let html = '<table class="list"><tr><th></th><th>日期</th><th>时间</th><th>明细</th><th>合计</th></tr>';
   for (const s of open) {
-    html += '<tr><td><input type="checkbox" class="pickSess" value="' + s.id + '" checked></td>' +
+    const sd = sameDayConflicts(s.clientId, s.date, sessionCategory(s), s.id);
+    html += '<tr><td><input type="checkbox" class="pickSess" value="' + s.id + '"' + (sd.length ? ' disabled data-sameday="1"' : ' checked') + '></td>' +
       '<td>' + fmtDate(s.date) + (s.isPublicHoliday ? ' <span class="ph-name">PH</span>' : '') +
+      (sd.length ? '<div class="sameday-block">' + esc(sameDayMessage(sessionCategory(s), s.date, sd)) + '</div>' : '') +
       (s.isNonFaceToFace && !isPhysio(s) ? ' <span class="muted">NF2F</span>' : '') +
       ' <span class="muted">' + esc(sessionTypeLabel(s)) + '</span></td>' +
       '<td>' + s.startTime + '–' + s.endTime + (!s.isNonFaceToFace && s.km > 0 ? '<div class="muted">' + s.km + ' km</div>' : '') + '</td>' +
@@ -1686,6 +1745,14 @@ $('invGenBtn').addEventListener('click', () => {
 
   const ids = Array.from(document.querySelectorAll('.pickSess:checked')).map(x => x.value);
   if (!ids.length) { alert('至少勾选一条 session。'); return; }
+  { const sdErrs = [];
+    for (const id of ids) {
+      const s = state.sessions.find(x => x.id === id);
+      if (!s) continue;
+      const sd = sameDayConflicts(s.clientId, s.date, sessionCategory(s), s.id);
+      if (sd.length) sdErrs.push(sameDayMessage(sessionCategory(s), s.date, sd));
+    }
+    if (sdErrs.length) { alert('不能生成 invoice / Cannot generate invoice：\n' + Array.from(new Set(sdErrs)).join('\n')); return; } }
   const invoiceDate = $('invDate').value || todayStr();
   const dueDate = $('invDue').value || addDays(invoiceDate, st.paymentTermsDays);
   if ($('invKind').value === 'physio') { generatePhysioInvoice(client, ids, invoiceDate, dueDate); return; }
@@ -2323,6 +2390,7 @@ function renderAll() {
   renderSettings();
   renderStats();
   updateMigrateHint();
+  syncSameDayBlock(false);
 }
 
 /* ================= init ================= */

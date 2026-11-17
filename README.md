@@ -34,3 +34,22 @@ node make-sample.js                              # rebuilds sample/EXAMPLE_physi
 ```
 `run.js` compares v1 against `V1_HTML` (a checkout of v1 @ 1e96102). If `REAL_LEDGER` points to a local v1 ledger, it also
 compares the stored INV-0014 with `REF_PNG`. That ledger has real client data, so it is never committed.
+
+## Same-day rule (HARD block)
+
+One participant cannot have **support work and physiotherapy on the same date**, even with no time overlap.
+The app checks sessions (open or invoiced) and non-void invoices in the v2 ledger:
+
+- Session form: picking a client/date/type that clashes shows a popup and a red note
+  (`這一天已有 support work，不能加物理治療` / `這一天已有物理治療，不能加 support work`, plus English) and disables **保存 Session**.
+- Invoice tab: a clashing session cannot be ticked, and **生成 Invoice** refuses it.
+
+Command-line check (Python 3, standard library only; opens both ledgers read-only):
+
+```
+python tools\check_same_day.py
+python tools\check_same_day.py --client "<name or NDIS number>" --date 2026-11-17 --type physio
+```
+
+Defaults: v2 ledger `D:\Grokbot\NDIS Invoices\ledger\invoice-data-v2.json`, v1 ledger `%USERPROFILE%\.openjarvis\invoice-data.json`.
+Exit code 0 = OK, 2 = conflict, 1 = error.
