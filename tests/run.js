@@ -168,6 +168,7 @@ async function printPdf(page, file) {
     check('support: identical totals (1350.00, GST 0)', g1.inv.total === g2.inv.total && g2.inv.total === 1350 && g2.inv.gst === 0, [g1.inv.total, g2.inv.total]);
     check('support: no invoiceType field added (v1-shaped record)', !('invoiceType' in g2.inv));
     check('support: identical invoice HTML', g1.html === g2.html && g1.sheet === g2.sheet);
+    check('title: support sheet never says "TAX INVOICE"', !/tax\s*invoice/i.test(g2.sheet));
     // Compare the app's print/PDF output (what Jackson sends), rasterised like inv14-1.png (80 dpi)
     const pngs = [];
     for (const [tag, app] of [['v1', a], ['v2', b]]) {
@@ -287,7 +288,11 @@ async function printPdf(page, file) {
                      'SUBTOTAL', 'TOTAL GST', 'INVOICE TOTAL', 'PAYMENTS', 'AMOUNT DUE', 'GST free'])
       check('physio: sheet shows "' + h + '"', physio.sheetText.includes(h));
     check('title: physio title is exactly INVOICE', physio.title === 'INVOICE');
-    check('title: no "TAX INVOICE" anywhere in app source', !/tax\s*invoice/i.test(V2_HTML));
+    // TAX INVOICE exists only as the Subcontractor Physio title option; NDIS physio and support sheets never show it.
+    check('title: physio sheet never says "TAX INVOICE"', !/tax\s*invoice/i.test(physio.sheetHtml));
+    check('title: "TAX INVOICE" in source only in the Subcontractor title option',
+      V2_HTML.split('\n').filter(l => /tax\s*invoice/i.test(l)).every(l => /invTitle|coTitle|\.title|title ===|option value="TAX INVOICE"/.test(l)),
+      V2_HTML.split('\n').filter(l => /tax\s*invoice/i.test(l)));
     check('physio: no AHPRA printed', !/AHPRA/i.test(physio.sheetHtml));
     check('travel: 25 min at $92/h = 0.42 h x $92 = $38.64 (qty rounded to 0.01 h first, like v1)', inv.lines[0].qty === 0.42 && inv.lines[0].amount === 38.64, inv.lines[0]);
     check('travel: parking/tolls line on 15_799_0128_1_3 at actual cost, GST free',
@@ -584,6 +589,171 @@ async function printPdf(page, file) {
     await ctx.close();
   }
 
+  /* ---------- 8. Subcontractor Physio (company invoices) ---------- */
+  {
+    const { ctx, page, dialogs, requests } = await openApp(V2_HTML, { seed: { 'ndis-invoice-tool-v2': ledgerText } });
+    const r = await page.evaluate(() => {
+      const out = {}; const dlg = []; window.alert = m => dlg.push(String(m)); window.confirm = () => true;
+      out.oldLedgerCompanies = Array.isArray(state.companies) && state.companies.length === 0;
+      // company through the settings UI (EXAMPLE data)
+      $('coName').value = 'EXAMPLE Health Pty Ltd'; $('coAbn').value = '00 000 000 000';
+      $('coAddress').value = '1 Example Rd, Melbourne VIC 3000'; $('coPhone').value = '0400 000 000';
+      $('coEmail').value = 'admin@example.com'; $('coRate').value = '115'; $('coDueDays').value = '7'; $('coGst').value = '0';
+      $('coSaveBtn').click();
+      const co = state.companies[0];
+      out.company = co && [co.name, co.rate, co.dueDays, co.gstRate, co.title];
+      // a second company without a price
+      $('coName').value = 'EXAMPLE NoPrice Co'; $('coRate').value = ''; $('coSaveBtn').click();
+      const co2 = state.companies[1];
+      // session form: subcontractor fields, presets, default 75 min
+      clearSessionForm();
+      $('sessKind').value = 'subcontractor'; $('sessKind').dispatchEvent(new Event('change'));
+      out.subFieldsShown = $('sessCompany').closest('label').style.display !== 'none' && $('sessClient').closest('label').style.display === 'none'
+        && $('sessEnd').closest('label').style.display === 'none';
+      out.presets = Array.from($('sessSubPreset').options).map(o => o.textContent);
+      out.defaultDesc = $('sessSubDesc').value; out.defaultMin = $('sessSubMin').value;
+      const addSub = (companyId, client, date, start, presetIdx, minutes, desc) => {
+        clearSessionForm();
+        $('sessKind').value = 'subcontractor'; $('sessKind').dispatchEvent(new Event('change'));
+        $('sessCompany').value = companyId; $('sessSubClient').value = client;
+        $('sessDate').value = date; $('sessDate').dispatchEvent(new Event('change'));
+        $('sessStart').value = start;
+        if (presetIdx != null) { $('sessSubPreset').value = String(presetIdx); $('sessSubPreset').dispatchEvent(new Event('change')); }
+        if (minutes != null) $('sessSubMin').value = String(minutes);
+        if (desc != null) $('sessSubDesc').value = desc;
+        out['saveDisabled_' + client] = $('sessSaveBtn').disabled;
+        const n = state.sessions.length; $('sessSaveBtn').click();
+        return state.sessions.length === n + 1 ? state.sessions[state.sessions.length - 1] : null;
+      };
+      const jim = addSub(co.id, 'Jim', '2026-11-18', '09:00', 0);
+      const li = addSub(co.id, 'Li (李叔叔)', '2026-11-18', '10:30', 0);
+      out.jim = jim && [jim.kind, jim.startTime, jim.endTime, jim.minutes, jim.description, jim.clientId];
+      // fixture: support session 2026-11-13 10:00-14:00 -> same day but no overlap is allowed (not NDIS rule)
+      const sameDay = addSub(co.id, 'EXAMPLE A', '2026-11-13', '15:00', 1, null, null);
+      out.sameDayAllowed = !!sameDay && !out['saveDisabled_EXAMPLE A'];
+      out.sameDayDesc = sameDay && sameDay.description;
+      // overlapping his own support time -> blocked
+      const d0 = dlg.length;
+      const ov = addSub(co.id, 'EXAMPLE B', '2026-11-13', '13:00', 2, 75, null);
+      out.overlapBlocked = !ov && dlg.slice(d0).some(m => /重叠|overlap/i.test(m));
+      // physio on a contractor day: overlapping blocked, non-overlapping allowed (no same-day block)
+      const addPhysio = (date, start, end) => {
+        clearSessionForm();
+        $('sessClient').value = state.clients[0].id;
+        $('sessKind').value = 'physio'; $('sessKind').dispatchEvent(new Event('change'));
+        $('sessDate').value = date; $('sessDate').dispatchEvent(new Event('change'));
+        $('sessStart').value = start; $('sessEnd').value = end; $('sessReportAdd').checked = false;
+        out['physioDisabled_' + start] = $('sessSaveBtn').disabled;
+        const n = state.sessions.length; $('sessSaveBtn').click(); return state.sessions.length === n + 1;
+      };
+      const d1 = dlg.length;
+      out.physioOverlapBlocked = !addPhysio('2026-11-18', '09:30', '10:00') && dlg.slice(d1).some(m => /重叠|overlap/i.test(m));
+      out.physioSameDayOk = addPhysio('2026-11-18', '14:00', '15:00') && !out['physioDisabled_14:00'];
+      out.sameDayFn = sameDayConflicts(state.clients[0].id, '2026-11-18', 'support', null).length; // only the physio
+      // support/physio pickers never list contractor sessions
+      $('invClient').value = state.clients[0].id;
+      $('invKind').value = 'support'; $('invKind').dispatchEvent(new Event('change'));
+      const subIds = state.sessions.filter(s => s.kind === 'subcontractor').map(s => s.id);
+      out.supportPickClean = !Array.from(document.querySelectorAll('.pickSess')).some(x => subIds.includes(x.value));
+      $('invKind').value = 'physio'; $('invKind').dispatchEvent(new Event('change'));
+      out.physioPickClean = !Array.from(document.querySelectorAll('.pickSess')).some(x => subIds.includes(x.value));
+      // invoice tab: subcontractor mode
+      $('invKind').value = 'subcontractor'; $('invKind').dispatchEvent(new Event('change'));
+      $('invCompany').value = co.id; $('invCompany').dispatchEvent(new Event('change'));
+      $('invDate').value = '2026-11-19'; $('invDate').dispatchEvent(new Event('change'));
+      out.uiSub = [$('invClientField').style.display, $('invCompanyField').style.display, $('invTitle').value, $('invCombine').checked, $('invDue').value];
+      const pick = ids => document.querySelectorAll('.pickSess').forEach(x => { x.checked = ids.includes(x.value); });
+      // separate (default): Jim + Li -> two invoices, consecutive numbers
+      state.settings.nextInvoiceNumber = 16;
+      pick([jim.id, li.id]);
+      let n = state.invoices.length; $('invGenBtn').click();
+      const sep = state.invoices.slice(n);
+      out.sep = sep.map(i => [i.number, i.invoiceType, i.title, i.client.name, i.total, i.gst, i.dueDate, i.lines.length]);
+      out.sepLine = sep[0] && sep[0].lines.map(l => [l.serviceDate, l.clientName, l.description, l.rate, l.qty, l.unit, l.amount])[0];
+      out.next = state.settings.nextInvoiceNumber;
+      out.sheetText = sep[1] ? (showPreview(sep[1]), $('invoiceSheet').innerText) : '';
+      out.sheetHtml = $('invoiceSheet').innerHTML;
+      out.fileName = pdfFilename(sep[1]);
+      // combined: void both, sessions return to open, then combine
+      sep.forEach(inv => { inv.sessionIds = state.sessions.filter(s => s.invoiceId === inv.id).map(s => s.id); inv.voided = true;
+        state.sessions.forEach(s => { if (s.invoiceId === inv.id) s.invoiceId = null; }); });
+      renderAll();
+      $('invKind').value = 'subcontractor'; $('invKind').dispatchEvent(new Event('change'));
+      $('invCompany').value = co.id; $('invCompany').dispatchEvent(new Event('change'));
+      pick([jim.id, li.id]); $('invCombine').checked = true; $('invTitle').value = 'TAX INVOICE';
+      n = state.invoices.length; $('invGenBtn').click();
+      const comb = state.invoices.slice(n);
+      out.comb = comb.map(i => [i.number, i.title, i.client.name, i.subtotal, i.total, i.lines.length]);
+      out.combTitle = document.querySelector('#invoiceSheet h1').textContent;
+      $('invCombine').checked = false;
+      // GST 10% company math
+      state.companies[0].gstRate = 10; state.companies[0].title = 'INVOICE';
+      const g = addSub(co.id, 'EXAMPLE G', '2026-11-20', '09:00', 0);
+      $('invKind').value = 'subcontractor'; $('invKind').dispatchEvent(new Event('change'));
+      $('invCompany').value = co.id; $('invCompany').dispatchEvent(new Event('change'));
+      pick([g.id]); n = state.invoices.length; $('invGenBtn').click();
+      const gi = state.invoices[n];
+      out.gst = gi && [gi.subtotal, gi.gstRate, gi.gst, gi.total];
+      state.companies[0].gstRate = 0;
+      // no price -> blocked
+      const np = addSub(co2.id, 'EXAMPLE N', '2026-11-21', '09:00', 0);
+      $('invCompany').value = co2.id; $('invCompany').dispatchEvent(new Event('change'));
+      pick([np.id]); n = state.invoices.length; const d2 = dlg.length; $('invGenBtn').click();
+      out.noPriceBlocked = state.invoices.length === n && dlg.slice(d2).some(m => /单价/.test(m));
+      // weekly stats count contractor minutes as hours
+      out.stats = weekStats('2026-11-16', null).hours.weekday >= 2.5;
+      // a company in use cannot be deleted
+      const d3 = dlg.length; document.querySelector('[data-codel="' + co.id + '"]').click();
+      out.noDelete = state.companies.some(c => c.id === co.id) && /不能删除/.test(dlg[d3] || '');
+      // round trip: companies survive save + reload of the ledger shape
+      saveState(); const saved = JSON.parse(localStorage.getItem(STORAGE_KEY));
+      out.savedCompanies = Array.isArray(saved.companies) && saved.companies.length === 2;
+      out.merge = mergeLedgers({ settings: {}, clients: [], sessions: [], invoices: [], companies: [{ id: 'a', name: 'A' }] },
+        { settings: {}, clients: [], sessions: [], invoices: [], companies: [{ id: 'b', name: 'B' }] }).companies.length;
+      renderArchive();
+      out.archiveShows = $('archiveList').innerText.includes('Li (李叔叔)') && $('archiveList').innerText.includes('EXAMPLE Health Pty Ltd');
+      $('archiveClient').value = state.clients[0].id;
+      out.archiveFilter = state.invoices.some(i => i.invoiceType === 'subcontractor' && !i.voided) && !getFilteredArchiveInvoices().some(i => i.invoiceType === 'subcontractor');
+      $('archiveClient').value = ''; $('archiveSearch').value = 'example health';
+      out.archiveSearch = getFilteredArchiveInvoices().length > 0 && getFilteredArchiveInvoices().every(i => i.invoiceType === 'subcontractor');
+      $('archiveSearch').value = ''; renderArchive();
+      out.dlg = dlg;
+      return out;
+    });
+    check('sub: old ledger without companies loads (companies = [])', r.oldLedgerCompanies);
+    check('sub: company saved via settings (rate 115, due 7, GST 0, INVOICE)', JSON.stringify(r.company) === JSON.stringify(['EXAMPLE Health Pty Ltd', 115, 7, 0, 'INVOICE']), r.company);
+    check('sub: form shows company/client fields, hides NDIS client + end time', r.subFieldsShown, r);
+    check('sub: 3 description presets, default preset 1, default 75 min',
+      r.presets.length === 4 && r.presets[2].startsWith('Physiotherapy session (Hydrotherapy)') && r.defaultDesc === 'Physiotherapy session (60 mins) + note writing (15 mins) - Home Visit' && r.defaultMin === '75', r.presets);
+    check('sub: session saved, end = start + 75 min, no NDIS client', JSON.stringify(r.jim) === JSON.stringify(['subcontractor', '09:00', '10:15', 75, 'Physiotherapy session (60 mins) + note writing (15 mins) - Home Visit', '']), r.jim);
+    check('sub: NOT subject to NDIS same-day rule (support day, no overlap -> saved)', r.sameDayAllowed && /initial assessment/.test(r.sameDayDesc), r);
+    check('sub: overlap with his own support time blocked', r.overlapBlocked, r.dlg);
+    check('sub: physio overlapping a contractor session blocked; same day without overlap allowed', r.physioOverlapBlocked && r.physioSameDayOk, r);
+    check('sub: same-day function ignores contractor sessions', r.sameDayFn === 1, r.sameDayFn);
+    check('sub: support and physio pickers never list contractor sessions', r.supportPickClean && r.physioPickClean);
+    check('sub: invoice tab shows company/title/combine, due = date + 7', JSON.stringify(r.uiSub) === JSON.stringify(['none', '', 'INVOICE', false, '2026-11-26']), r.uiSub);
+    check('sub: default = one invoice per client, consecutive numbers INV-0016 / INV-0017, $143.75 each',
+      JSON.stringify(r.sep) === JSON.stringify([['INV-0016', 'subcontractor', 'INVOICE', 'Jim', 143.75, 0, '2026-11-26', 1], ['INV-0017', 'subcontractor', 'INVOICE', 'Li (李叔叔)', 143.75, 0, '2026-11-26', 1]]) && r.next === 18, r.sep);
+    check('sub: line = date, client, description, $115/h, 75 min, $143.75',
+      JSON.stringify(r.sepLine) === JSON.stringify(['2026-11-18', 'Jim', 'Physiotherapy session (60 mins) + note writing (15 mins) - Home Visit', 115, 75, 'min', 143.75]), r.sepLine);
+    for (const h of ['DATE', 'CLIENT', 'SERVICE DESCRIPTION', 'UNIT PRICE', 'QTY', 'TOTAL', 'SUBTOTAL', 'GST', 'TOTAL DUE', 'BILL TO', 'EXAMPLE Health Pty Ltd', 'admin@example.com', 'Li (李叔叔)', '75 mins', '$115.00/h', '$143.75', 'From', 'Payment details'])
+      check('sub: sheet shows "' + h + '"', r.sheetText.includes(h), r.sheetText.slice(0, 400));
+    check('sub: sheet has no NDIS number / item codes / plan manager', !/NDIS|15_055|Plan Manager|Participant/i.test(r.sheetHtml), r.sheetText);
+    check('sub: PDF file name has company + client', r.fileName === 'Invoice INV-0017 - EXAMPLE Health Pty Ltd - Li (李叔叔).pdf', r.fileName);
+    check('sub: combine checkbox -> one invoice $287.50 (2 lines), TAX INVOICE title option',
+      JSON.stringify(r.comb) === JSON.stringify([['INV-0018', 'TAX INVOICE', 'Jim, Li (李叔叔)', 287.5, 287.5, 2]]) && r.combTitle === 'TAX INVOICE', r.comb);
+    check('sub: GST 10% -> 143.75 + 14.38 = 158.13', JSON.stringify(r.gst) === JSON.stringify([143.75, 10, 14.38, 158.13]), r.gst);
+    check('sub: empty price blocks issuing', r.noPriceBlocked, r.dlg.slice(-2));
+    check('sub: weekly stats count contractor minutes as hours', r.stats);
+    check('sub: company in use cannot be deleted', r.noDelete);
+    check('sub: companies saved in ledger and merged by id', r.savedCompanies && r.merge === 2, r);
+    check('sub: archive lists company invoices (client + company), NDIS client filter excludes them, search finds company',
+      r.archiveShows && r.archiveFilter && r.archiveSearch, r);
+    check('sub: no page errors', !dialogs.some(d => d.startsWith('pageerror')), dialogs.filter(d => d.startsWith('pageerror')));
+    check('sub: no request to 127.0.0.1:8765', !requests.some(u => u.includes('8765')), requests);
+    await ctx.close();
+  }
+
   /* ---------- 7. CLI tools/check_same_day.py (read-only) ---------- */
   {
     const tmp = fs.mkdtempSync(path.join(require('os').tmpdir(), 'sdcli-'));
@@ -599,10 +769,17 @@ async function printPdf(page, file) {
     const r2 = run(['--v2', bad, '--no-v1']);
     const r3 = run(['--v2', clean, '--no-v1', '--client', c.clients[0].ndisNumber, '--date', '13/11/2026', '--type', 'physio']);
     const r4 = run(['--v2', clean, '--no-v1', '--client', c.clients[0].name, '--date', '2026-11-12', '--type', 'physio']);
+    const subL = path.join(tmp, 'v2sub.json'); const cs = JSON.parse(ledgerText);
+    cs.sessions.push({ id: 'cs1', clientId: '', kind: 'subcontractor', companyId: 'co1', clientName: 'EXAMPLE Jim', date: '2026-11-12', startTime: '15:00', endTime: '16:15', minutes: 75 });
+    cs.invoices.push({ id: 'ci1', number: 'INV-9100', invoiceType: 'subcontractor', voided: false, sessionIds: ['cs1'], client: { name: cs.clients[0].name, ndisNumber: '' }, lines: [{ serviceDate: '2026-11-12' }] });
+    fs.writeFileSync(subL, JSON.stringify(cs));
+    const r5 = run(['--v2', subL, '--no-v1']);
+    const r6 = run(['--v2', subL, '--no-v1', '--client', c.clients[0].name, '--date', '2026-11-12', '--type', 'support']);
     check('cli: clean ledgers -> exit 0', r1.code === 0 && /OK/.test(r1.out), r1);
     check('cli: cross-category same day reported -> exit 2', r2.code === 2 && /CONFLICT/.test(r2.out) && /2026-11-13/.test(r2.out), r2);
     check('cli: proposed physio on a support day -> BLOCKED exit 2 (zh+en)', r3.code === 2 && r3.out.includes('這一天已有 support work，不能加物理治療'), r3);
     check('cli: proposed physio on a free day -> exit 0', r4.code === 0, r4);
+    check('cli: Subcontractor Physio sessions/invoices ignored (no conflict)', r5.code === 0 && r6.code === 0 && !/INV-9100|cs1/.test(r5.out + r6.out), [r5, r6]);
     check('cli: ledger files untouched', [clean, bad].map(f => fs.readFileSync(f, 'utf8')).join() === before.join());
     check('cli: opens ledgers read-only ("rb" only, no write mode)', /open\(path, "rb"\)/.test(fs.readFileSync(path.join(ROOT, 'tools', 'check_same_day.py'), 'utf8'))
       && !/open\([^)]*['"](w|a|r\+|wb|ab)['"]/.test(fs.readFileSync(path.join(ROOT, 'tools', 'check_same_day.py'), 'utf8')));

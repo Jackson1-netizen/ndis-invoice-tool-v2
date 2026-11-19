@@ -60,3 +60,18 @@ When a new **Direct** physiotherapy session is saved, the app also adds a separa
 (item `15_055_0128_1_3_NF`, default 15 min = 0.25 h × $183.99, "Report writing") starting right after the
 return travel. Minutes and text are editable on the form; untick 「同时加报告 NF2F」 to skip it. The report is a
 normal session, so it can be edited or deleted before invoicing. Editing an existing session never adds one.
+
+## Subcontractor Physio (invoice to a company)
+
+A third invoice type for physio work done as a contractor for another provider. The invoice is billed to the
+company, not to an NDIS participant: no NDIS number, item codes or plan manager on the sheet.
+
+- **Settings → 公司**: add each company once (name, ABN, address, phone, email, $/hour, payment days (default 7),
+  GST % (default 0), default title INVOICE or TAX INVOICE). A company with sessions or invoices cannot be deleted.
+- **加新的 Session → Invoice 类型 = Subcontractor Physio**: pick the company, type the client's name (as printed),
+  pick one of three description presets (editable), minutes default 75, date and start time.
+- **出 Invoice → Subcontractor Physio**: pick the company, tick sessions. Default = one invoice per client, numbered
+  consecutively from the shared INV sequence. Tick 「合并成一张」 to put all ticked sessions on one invoice.
+  Line amount = $/hour × minutes / 60. An empty price blocks issuing.
+- These sessions are **not** part of the NDIS same-day rule (app and `tools/check_same_day.py` both ignore them),
+  but a time overlap with any other session is still blocked in both directions.

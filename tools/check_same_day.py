@@ -3,7 +3,7 @@ r"""Same-day support-work / physiotherapy check for NDIS Invoice Tool v2 (read-o
 
 HARD rule: one participant cannot have support work and physiotherapy on the same date.
 Evidence: sessions (open or invoiced) and non-void invoice lines, from the v2 ledger and the
-v1 ledger. Both files are opened 'rb' and never written. Python 3 standard library only.
+v1 ledger. Subcontractor Physio sessions/invoices (billed to a company) are ignored. Both files are opened 'rb' and never written. Python 3 standard library only.
 
 Usage (Windows PowerShell):
   python check_same_day.py                       # report all conflicts in both ledgers
@@ -60,12 +60,14 @@ def collect(ledgers):
         sessions = [s for s in data.get("sessions", []) if isinstance(s, dict)]
         by_id = {s.get("id"): s for s in sessions}
         for s in sessions:
+            if s.get("kind") == "subcontractor":
+                continue  # Subcontractor Physio (billed to a company) is not part of the NDIS same-day rule
             c = clients.get(s.get("clientId"), {})
             cat = "physio" if s.get("kind") == "physio" else "support"
             p = entry(person_key(c.get("ndisNumber"), c.get("name")), c.get("name", "?"))
             p["days"][s.get("date")][cat].append("%s session %s-%s" % (label, s.get("startTime", ""), s.get("endTime", "")))
         for inv in data.get("invoices", []):
-            if not isinstance(inv, dict) or inv.get("voided"):
+            if not isinstance(inv, dict) or inv.get("voided") or inv.get("invoiceType") == "subcontractor":
                 continue
             cat = "physio" if inv.get("invoiceType") == "physio" else "support"
             ic = inv.get("client") or {}

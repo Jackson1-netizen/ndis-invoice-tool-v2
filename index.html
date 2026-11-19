@@ -108,6 +108,11 @@
   .inv-sheet-physio .inv-to { margin-bottom: 10px; }
   .inv-sheet-physio .inv-totals td { padding: 3px 8px; }
   .inv-sheet-physio .inv-pay { margin-top: 16px; }
+  .inv-sheet-sub { font-family: Arial, Helvetica, "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", sans-serif; }
+  .inv-sheet-sub .inv-to { margin-bottom: 10px; }
+  .inv-sheet-sub .inv-totals td { padding: 3px 8px; }
+  .inv-sheet-sub .inv-pay { margin-top: 16px; }
+  .inv-items-sub td.desc { width: 46%; }
   .inv-pay h3 { font-size: 13px; text-decoration: underline; margin: 0 0 6px; }
   .inv-pay td { padding: 2px 12px 2px 0; }
 
@@ -155,14 +160,30 @@
   <div class="card">
     <h2 id="sessFormTitle">添加 Session</h2>
     <div class="grid">
-      <label class="field">客人
+      <label class="field not-sub">客人
         <select id="sessClient"></select>
       </label>
       <label class="field">Invoice 类型
         <select id="sessKind">
           <option value="support">Support work</option>
           <option value="physio">Physiotherapy</option>
+          <option value="subcontractor">Subcontractor Physio（开给公司）</option>
         </select>
+      </label>
+      <label class="field sub-only">公司
+        <select id="sessCompany"></select>
+      </label>
+      <label class="field sub-only">客人名字（印在 invoice）
+        <input id="sessSubClient" placeholder="e.g. Jim">
+      </label>
+      <label class="field sub-only">服务内容（预设）
+        <select id="sessSubPreset"></select>
+      </label>
+      <label class="field sub-only" style="grid-column: 1 / -1;">服务描述（可改）
+        <input id="sessSubDesc">
+      </label>
+      <label class="field sub-only">数量（分钟，默认 75）
+        <input type="number" id="sessSubMin" min="1" max="600" step="1" value="75">
       </label>
       <label class="field support-only">支持类型
         <select id="sessSupportType">
@@ -176,7 +197,7 @@
       <label class="field">开始时间
         <input type="time" id="sessStart">
       </label>
-      <label class="field">结束时间
+      <label class="field not-sub">结束时间
         <input type="time" id="sessEnd">
       </label>
       <label class="field" id="sessKmField">开车公里数（没有就留空）
@@ -246,10 +267,23 @@
         <select id="invKind">
           <option value="support">Support work</option>
           <option value="physio">Physiotherapy</option>
+          <option value="subcontractor">Subcontractor Physio（开给公司）</option>
         </select>
       </label>
-      <label class="field">客人
+      <label class="field" id="invClientField">客人
         <select id="invClient"></select>
+      </label>
+      <label class="field" id="invCompanyField" style="display:none;">公司
+        <select id="invCompany"></select>
+      </label>
+      <label class="field" id="invTitleField" style="display:none;">标题
+        <select id="invTitle">
+          <option value="INVOICE">INVOICE</option>
+          <option value="TAX INVOICE">TAX INVOICE</option>
+        </select>
+      </label>
+      <label class="check" id="invCombineField" style="display:none; align-self:end;">
+        <input type="checkbox" id="invCombine"> 合并成一张 / combine into one invoice
       </label>
       <label class="field">Invoice 日期
         <input type="date" id="invDate">
@@ -487,6 +521,29 @@
   </div>
 
   <div class="card">
+    <h2>公司（Subcontractor Physio：invoice 开给公司）</h2>
+    <div id="companyList"></div>
+    <div class="grid" style="margin-top:10px;">
+      <label class="field">公司名称 <input id="coName"></label>
+      <label class="field">ABN <input id="coAbn"></label>
+      <label class="field" style="grid-column: 1 / -1;">地址 <input id="coAddress"></label>
+      <label class="field">电话 <input id="coPhone"></label>
+      <label class="field">Email <input id="coEmail"></label>
+      <label class="field">单价 $/小时（必填才能出 invoice） <input type="number" id="coRate" min="0" step="0.01"></label>
+      <label class="field">付款期限（天，默认 7） <input type="number" id="coDueDays" min="0" step="1" value="7"></label>
+      <label class="field">GST %（默认 0 = 不收） <input type="number" id="coGst" min="0" max="100" step="0.1" value="0"></label>
+      <label class="field">默认标题
+        <select id="coTitle"><option value="INVOICE">INVOICE</option><option value="TAX INVOICE">TAX INVOICE</option></select>
+      </label>
+    </div>
+    <div style="margin-top:12px; display:flex; gap:10px;">
+      <button class="primary" type="button" id="coSaveBtn">保存公司</button>
+      <button class="ghost" type="button" id="coCancelBtn" style="display:none;">取消编辑</button>
+    </div>
+    <div class="hint">Subcontractor Physio invoice：每个 session 一行，数量用分钟（默认 75），金额 = 单价 × 分钟 / 60（四舍五入到分）。不印 NDIS 号码、item code、plan manager。不受 NDIS 同日规则限制，但和你自己其他 session 时间重叠仍然不行。</div>
+  </div>
+
+  <div class="card">
     <h2>Invoice 编号</h2>
     <div class="grid">
       <label class="field">前缀 <input id="setPrefix"></label>
@@ -572,7 +629,8 @@ const DEFAULT_STATE = {
   },
   clients: [],
   sessions: [],
-  invoices: []
+  invoices: [],
+  companies: []
 };
 
 const SUPPORT_TYPE_LABEL = {
@@ -613,7 +671,8 @@ function loadState() {
     }),
     clients: saved.clients || [],
     sessions: saved.sessions || [],
-    invoices: saved.invoices || []
+    invoices: saved.invoices || [],
+    companies: Array.isArray(saved.companies) ? saved.companies : []
   };
 }
 let state = loadState();
@@ -649,7 +708,8 @@ function mergeLedgers(file, local) {
     settings: settings,
     clients: mergeById(f.clients, l.clients),
     sessions: mergeById(f.sessions, l.sessions),
-    invoices: mergeById(f.invoices, l.invoices)
+    invoices: mergeById(f.invoices, l.invoices),
+    companies: mergeById(f.companies, l.companies)
   };
 }
 
@@ -1007,6 +1067,7 @@ function serviceNameFor(session, settings) {
 // Returns array of { serviceDate, description, lineItem, qty, unit, rate, amount }
 function sessionLines(session, client, settings) {
   if (isPhysio(session)) return physioLines(session, settings);
+  if (isSub(session)) return subLines(session);
   const rates = effectiveRates(client);
   const li = lineItemsFor(session, settings);
   const name = serviceNameFor(session, settings);
@@ -1069,6 +1130,29 @@ const PHYSIO_ITEM_NAME = {
   parking: 'Provider travel - non-labour costs'
 };
 const isPhysio = session => !!session && session.kind === 'physio';
+// Subcontractor Physio: billed to a company (state.companies), not NDIS. One line per session, qty in minutes.
+const isSub = session => !!session && session.kind === 'subcontractor';
+const SUB_PRESETS = [
+  'Physiotherapy session (60 mins) + note writing (15 mins) - Home Visit',
+  'Physiotherapy initial assessment (60 mins) + note writing (15 mins) - Home Visit',
+  'Physiotherapy session (Hydrotherapy) (60 mins) + note writing (15 mins)'
+];
+const SUB_DEFAULT_MIN = 75;
+const getCompany = id => (state.companies || []).find(c => c.id === id);
+function subLines(session, rateOverride) {
+  const co = getCompany(session.companyId);
+  const rate = rateOverride != null ? rateOverride : (co && Number(co.rate) > 0 ? Number(co.rate) : 0);
+  const minutes = Math.round(Number(session.minutes) || 0);
+  return [{ serviceDate: session.date, startTime: session.startTime, endTime: session.endTime,
+    clientName: session.clientName || '', description: session.description || '', lineItem: '', claimType: '',
+    rateKind: 'subcontractor', qty: minutes, unit: 'min', rate: rate, gst: 0,
+    amount: round2(rate * minutes / 60) }];
+}
+function sessionClientName(s) {
+  if (isSub(s)) { const co = getCompany(s.companyId); return (co ? co.name : '?') + ' · ' + (s.clientName || '?'); }
+  const c = getClient(s.clientId);
+  return c ? c.name : '?';
+}
 // HARD rule: one participant cannot have support work and physiotherapy on the same date (any times).
 // Checked against sessions (open or invoiced) and non-void invoices of the participant.
 const sessionCategory = session => (isPhysio(session) ? 'physio' : 'support');
@@ -1086,12 +1170,13 @@ function sameDayConflicts(clientId, date, kind, excludeSessionId) {
   const label = other === 'physio' ? 'Physiotherapy' : 'Support work';
   const out = [];
   for (const s of state.sessions) {
+    if (isSub(s)) continue; // contractor work is not part of the NDIS same-day rule
     if (s.id === excludeSessionId || s.clientId !== clientId || s.date !== date) continue;
     if (sessionCategory(s) === other) out.push(label + ' session ' + s.startTime + '–' + s.endTime);
   }
   const client = state.clients.find(c => c.id === clientId);
   for (const inv of state.invoices) {
-    if (!inv || inv.voided || invoiceCategory(inv) !== other) continue;
+    if (!inv || inv.voided || inv.invoiceType === 'subcontractor' || invoiceCategory(inv) !== other) continue;
     if (!(inv.lines || []).some(l => l.serviceDate === date)) continue;
     if (!invoiceBelongsToClient(inv, client, state.sessions)) continue;
     out.push(label + ' invoice ' + inv.number);
@@ -1190,15 +1275,15 @@ function findOverlaps(sessions) {
       if (o.id === s.id || o.date !== s.date) continue;
       const [c, d] = sessionWindow(o);
       if (Math.min(b, d) - Math.max(a, c) > 0) {
-        const oc = getClient(o.clientId);
         msgs.push(fmtDate(s.date) + ' ' + s.startTime + '–' + s.endTime + ' 和 ' +
-          (oc ? oc.name : '?') + ' ' + o.startTime + '–' + o.endTime + '（' + sessionTypeLabel(o) + '）重叠');
+          sessionClientName(o) + ' ' + o.startTime + '–' + o.endTime + '（' + sessionTypeLabel(o) + '）重叠');
       }
     }
   }
   return msgs;
 }
 function sessionTypeLabel(s) {
+  if (isSub(s)) return 'Subcontractor Physio';
   return isPhysio(s) ? 'Physio · ' + PHYSIO_CLAIM_LABEL[physioClaimOf(s)] : SUPPORT_TYPE_LABEL[supportTypeOf(s)];
 }
 
@@ -1234,6 +1319,9 @@ function weekStats(weekStartIso, clientIdOrNull) {
     for (const line of lines) {
       if (line.unit === 'h') {
         hours[bucket] = round2(hours[bucket] + line.qty);
+        labourPay = round2(labourPay + line.amount);
+      } else if (line.unit === 'min') {
+        hours[bucket] = round2(hours[bucket] + line.qty / 60);
         labourPay = round2(labourPay + line.amount);
       } else {
         travelPay = round2(travelPay + line.amount);
@@ -1537,10 +1625,15 @@ $('sessNF2F').addEventListener('change', syncSessKmVisibility);
 
 function syncSessKind() {
   const physio = $('sessKind').value === 'physio';
-  document.querySelectorAll('#tab-sessions .support-only').forEach(el => { el.style.display = physio ? 'none' : ''; });
+  const sub = $('sessKind').value === 'subcontractor';
+  document.querySelectorAll('#tab-sessions .support-only').forEach(el => { el.style.display = (physio || sub) ? 'none' : ''; });
   document.querySelectorAll('#tab-sessions .physio-only').forEach(el => { el.style.display = physio ? '' : 'none'; });
-  $('sessSupportHint').style.display = physio ? 'none' : '';
-  if (physio) {
+  document.querySelectorAll('#tab-sessions .sub-only').forEach(el => { el.style.display = sub ? '' : 'none'; });
+  document.querySelectorAll('#tab-sessions .not-sub').forEach(el => { el.style.display = sub ? 'none' : ''; });
+  $('sessSupportHint').style.display = (physio || sub) ? 'none' : '';
+  if (sub) {
+    $('sessKmField').style.display = 'none';
+  } else if (physio) {
     const direct = $('sessClaimType').value === 'direct';
     document.querySelectorAll('#tab-sessions .physio-travel').forEach(el => { el.style.display = direct ? '' : 'none'; });
     $('sessKmField').style.display = direct ? '' : 'none';
@@ -1572,7 +1665,7 @@ let sessBlockShown = '';
 function syncSameDayBlock(popup) {
   const kind = $('sessKind').value === 'physio' ? 'physio' : 'support';
   const clientId = $('sessClient').value, date = $('sessDate').value;
-  const conflicts = sameDayConflicts(clientId, date, kind, editingSessionId);
+  const conflicts = $('sessKind').value === 'subcontractor' ? [] : sameDayConflicts(clientId, date, kind, editingSessionId);
   const msg = conflicts.length ? sameDayMessage(kind, date, conflicts) : '';
   $('sessSaveBtn').disabled = !!msg;
   $('sessSameDayMsg').textContent = msg;
@@ -1596,6 +1689,8 @@ function clearSessionForm() {
   $('sessTravelOut').value = ''; $('sessTravelRet').value = '';
   $('sessParking').value = ''; $('sessParkingNote').value = '';
   $('sessReportAdd').checked = true; $('sessReportMin').value = '15'; $('sessReportDesc').value = 'Report writing';
+  $('sessSubClient').value = ''; $('sessSubPreset').value = '0'; $('sessSubDesc').value = SUB_PRESETS[0];
+  $('sessSubMin').value = String(SUB_DEFAULT_MIN);
   syncSessKmVisibility();
   syncSupportHint();
   syncSessKind();
@@ -1604,7 +1699,45 @@ function clearSessionForm() {
   syncSameDayBlock(false);
 }
 
+// Other sessions (any type, any client) whose time window overlaps the candidate: Jackson's own time.
+function overlappingSessions(cand, onlyOther) {
+  const [a, b] = sessionWindow(cand);
+  return state.sessions.filter(o => o.id !== cand.id && o.date === cand.date && (!onlyOther || onlyOther(o)) &&
+    (function () { const [c, d] = sessionWindow(o); return Math.min(b, d) - Math.max(a, c) > 0; })());
+}
+function overlapText(list) {
+  return list.map(o => fmtDate(o.date) + ' ' + o.startTime + '–' + o.endTime + ' ' + sessionClientName(o) + '（' + sessionTypeLabel(o) + '）').join('\n');
+}
+function saveSubSession() {
+  const companyId = $('sessCompany').value;
+  const clientName = $('sessSubClient').value.trim();
+  const date = $('sessDate').value, start = $('sessStart').value;
+  const minutes = Math.round(Number($('sessSubMin').value));
+  const description = $('sessSubDesc').value.trim();
+  if (!companyId || !getCompany(companyId)) { alert('请先在「设置 → 公司」添加公司。'); return; }
+  if (!clientName) { alert('客人名字要填。'); return; }
+  if (!date || !start) { alert('日期和开始时间都要填。'); return; }
+  if (!(minutes > 0) || minutes > 600) { alert('数量（分钟）不对。'); return; }
+  if (!description) { alert('服务描述要填。'); return; }
+  const endMin = toMin(start) + minutes;
+  if (endMin > 24 * 60) { alert('不支持跨午夜。'); return; }
+  const data = { clientId: '', kind: 'subcontractor', companyId: companyId, clientName: clientName, date: date,
+    startTime: start, endTime: minToTime(endMin), minutes: minutes, description: description,
+    km: 0, isPublicHoliday: false, isNonFaceToFace: false };
+  const clash = overlappingSessions(Object.assign({ id: editingSessionId || '__new' }, data));
+  if (clash.length) { alert('时间重叠，不能保存 / Time overlaps another session:\n' + overlapText(clash)); return; }
+  if (editingSessionId) {
+    const ex = state.sessions.find(x => x.id === editingSessionId);
+    ['claimType', 'physioDescription', 'travelOutMin', 'travelReturnMin', 'parkingTolls', 'parkingTollsNote', 'supportType'].forEach(k => { delete ex[k]; });
+    Object.assign(ex, data);
+  } else {
+    state.sessions.push(Object.assign({ id: uid(), invoiceId: null }, data));
+  }
+  saveState(); clearSessionForm(); $('sessKind').value = 'subcontractor'; syncSessKind(); renderAll(); toast('Session 已保存');
+}
+
 $('sessSaveBtn').addEventListener('click', () => {
+  if ($('sessKind').value === 'subcontractor') { saveSubSession(); return; }
   const clientId = $('sessClient').value;
   const date = $('sessDate').value, start = $('sessStart').value, end = $('sessEnd').value;
   if (!clientId) { alert('请先添加客人（"客人"页签）。'); return; }
@@ -1639,8 +1772,13 @@ $('sessSaveBtn').addEventListener('click', () => {
       const rerrs = physioSessionErrors(report);
       if (rerrs.length) { alert(rerrs.join('\n')); return; }
     }
+    { const clash = [pdata].concat(report ? [report] : []).reduce((acc, x, i) =>
+        acc.concat(overlappingSessions(Object.assign({ id: i === 0 ? (editingSessionId || '__new') : '__new2' }, x), isSub)), []);
+      if (clash.length) { alert('时间重叠，不能保存 / Time overlaps another session:\n' + overlapText(clash)); return; } }
     if (editingSessionId) {
-      Object.assign(state.sessions.find(s => s.id === editingSessionId), pdata);
+      const exp = state.sessions.find(s => s.id === editingSessionId);
+      ['companyId', 'clientName', 'minutes', 'description'].forEach(k => { delete exp[k]; });
+      Object.assign(exp, pdata);
     } else {
       state.sessions.push(Object.assign({ id: uid(), invoiceId: null }, pdata));
       if (report) state.sessions.push(Object.assign({ id: uid(), invoiceId: null }, report));
@@ -1655,8 +1793,11 @@ $('sessSaveBtn').addEventListener('click', () => {
   const data = { clientId: clientId, date: date, startTime: start, endTime: end,
                  km: km, isPublicHoliday: $('sessPH').checked, isNonFaceToFace: isNF2F,
                  supportType: supportType };
+  { const clash = overlappingSessions(Object.assign({ id: editingSessionId || '__new' }, data), isSub);
+    if (clash.length) { alert('时间重叠，不能保存 / Time overlaps another session:\n' + overlapText(clash)); return; } }
   if (editingSessionId) {
     const ex = state.sessions.find(s => s.id === editingSessionId);
+    if (ex && ex.kind === 'subcontractor') { ['companyId', 'clientName', 'minutes', 'description'].forEach(k => { delete ex[k]; }); }
     if (ex && ex.kind) { delete ex.kind; delete ex.claimType; delete ex.physioDescription; delete ex.travelOutMin; delete ex.travelReturnMin; delete ex.parkingTolls; delete ex.parkingTollsNote; }
     Object.assign(state.sessions.find(s => s.id === editingSessionId), data);
   } else {
@@ -1668,7 +1809,9 @@ $('sessCancelBtn').addEventListener('click', () => { clearSessionForm(); });
 
 function describeLines(session, client) {
   return sessionLines(session, client, state.settings)
-    .map(l => l.qty + (l.unit === 'h' ? ' h' : l.unit === 'each' ? ' each' : ' km') + ' × ' + money(l.rate) + ' = ' + money(l.amount))
+    .map(l => l.unit === 'min'
+      ? (l.qty + ' min × ' + (l.rate > 0 ? money(l.rate) + '/h' : '（公司未设单价）') + ' = ' + money(l.amount))
+      : l.qty + (l.unit === 'h' ? ' h' : l.unit === 'each' ? ' each' : ' km') + ' × ' + money(l.rate) + ' = ' + money(l.amount))
     .join('<br>');
 }
 
@@ -1683,7 +1826,7 @@ function renderSessions() {
     html += '<tr><td>' + fmtDate(s.date) + (s.isPublicHoliday ? ' <span class="ph-name">PH</span>' : '') +
       (s.isNonFaceToFace && !isPhysio(s) ? ' <span class="muted">NF2F</span>' : '') +
       ' <span class="muted">' + esc(sessionTypeLabel(s)) + '</span>' +
-      '</td><td>' + esc(c ? c.name : '?') + '</td><td>' + s.startTime + '–' + s.endTime +
+      '</td><td>' + esc(isSub(s) ? sessionClientName(s) : (c ? c.name : '?')) + '</td><td>' + s.startTime + '–' + s.endTime +
       (!s.isNonFaceToFace && s.km > 0 ? '<div class="muted">' + s.km + ' km</div>' : '') +
       '</td><td class="muted">' + describeLines(s, c) + '</td>' +
       '<td class="total-cell">' + money(sessionTotal(s, c)) + '</td>' +
@@ -1703,7 +1846,12 @@ $('sessList').addEventListener('click', e => {
     $('sessKm').value = s.km || ''; $('sessPH').checked = s.isPublicHoliday;
     $('sessNF2F').checked = !!s.isNonFaceToFace;
     $('sessSupportType').value = supportTypeOf(s);
-    $('sessKind').value = isPhysio(s) ? 'physio' : 'support';
+    $('sessKind').value = isPhysio(s) ? 'physio' : isSub(s) ? 'subcontractor' : 'support';
+    if (isSub(s)) {
+      $('sessCompany').value = s.companyId; $('sessSubClient').value = s.clientName || '';
+      const pi = SUB_PRESETS.indexOf(s.description); $('sessSubPreset').value = pi >= 0 ? String(pi) : 'custom';
+      $('sessSubDesc').value = s.description || ''; $('sessSubMin').value = String(s.minutes || SUB_DEFAULT_MIN);
+    }
     $('sessClaimType').value = isPhysio(s) ? physioClaimOf(s) : 'direct';
     $('sessPhysioDesc').value = s.physioDescription || '';
     $('sessTravelOut').value = s.travelOutMin || ''; $('sessTravelRet').value = s.travelReturnMin || '';
@@ -1727,12 +1875,13 @@ $('sessList').addEventListener('click', e => {
 
 /* ================= invoice tab ================= */
 function renderInvoicePick() {
+  if ($('invKind').value === 'subcontractor') { renderSubInvoicePick(); return; }
   const clientId = $('invClient').value;
   const box = $('invSessionPick');
   if (!clientId) { box.innerHTML = '<p class="muted">先添加客人和 session。</p>'; return; }
   const c = getClient(clientId);
   const wantPhysio = $('invKind').value === 'physio';
-  const open = state.sessions.filter(s => !s.invoiceId && s.clientId === clientId && isPhysio(s) === wantPhysio)
+  const open = state.sessions.filter(s => !s.invoiceId && s.clientId === clientId && !isSub(s) && isPhysio(s) === wantPhysio)
     .sort((a, b) => a.date.localeCompare(b.date) || a.startTime.localeCompare(b.startTime));
   if (!open.length) { box.innerHTML = '<p class="muted">这个客人没有待开票的 ' + (wantPhysio ? 'Physiotherapy' : 'Support work') + ' session。</p>'; return; }
   let html = '<table class="list"><tr><th></th><th>日期</th><th>时间</th><th>明细</th><th>合计</th></tr>';
@@ -1750,16 +1899,120 @@ function renderInvoicePick() {
   box.innerHTML = html + '</table>';
 }
 $('invClient').addEventListener('change', renderInvoicePick);
-$('invKind').addEventListener('change', () => {
+function syncInvKind() {
+  const sub = $('invKind').value === 'subcontractor';
   $('invPaymentsField').style.display = $('invKind').value === 'physio' ? '' : 'none';
+  $('invClientField').style.display = sub ? 'none' : '';
+  ['invCompanyField', 'invTitleField', 'invCombineField'].forEach(id => { $(id).style.display = sub ? '' : 'none'; });
+  if (sub) syncSubCompanyDefaults();
+}
+function syncSubCompanyDefaults() {
+  const co = getCompany($('invCompany').value);
+  if (!co) return;
+  $('invTitle').value = co.title === 'TAX INVOICE' ? 'TAX INVOICE' : 'INVOICE';
+  if ($('invDate').value) $('invDue').value = addDays($('invDate').value, subDueDays(co));
+}
+const subDueDays = co => { const n = parseInt(co && co.dueDays, 10); return isNaN(n) || n < 0 ? 7 : n; };
+$('invKind').addEventListener('change', () => {
+  syncInvKind();
   renderInvoicePick();
 });
+$('invCompany').addEventListener('change', () => { syncSubCompanyDefaults(); renderInvoicePick(); });
 $('invDate').addEventListener('change', () => {
-  if ($('invDate').value) $('invDue').value = addDays($('invDate').value, state.settings.paymentTermsDays);
+  if (!$('invDate').value) return;
+  if ($('invKind').value === 'subcontractor' && getCompany($('invCompany').value)) {
+    $('invDue').value = addDays($('invDate').value, subDueDays(getCompany($('invCompany').value)));
+  } else {
+    $('invDue').value = addDays($('invDate').value, state.settings.paymentTermsDays);
+  }
 });
+
+function renderSubInvoicePick() {
+  const box = $('invSessionPick');
+  const co = getCompany($('invCompany').value);
+  if (!co) { box.innerHTML = '<p class="muted">先在「设置 → 公司」添加公司，再加 Subcontractor Physio session。</p>'; return; }
+  const open = state.sessions.filter(s => !s.invoiceId && isSub(s) && s.companyId === co.id)
+    .sort((a, b) => a.date.localeCompare(b.date) || a.startTime.localeCompare(b.startTime));
+  let html = Number(co.rate) > 0 ? '' : '<div class="sameday-block">' + esc(co.name) + ' 还没有单价：先在「设置 → 公司」填单价，否则不能出 invoice。</div>';
+  if (!open.length) { box.innerHTML = html + '<p class="muted">这个公司没有待开票的 session。</p>'; return; }
+  html += '<table class="list"><tr><th></th><th>日期</th><th>客人</th><th>时间</th><th>明细</th><th>合计</th></tr>';
+  for (const s of open) {
+    html += '<tr><td><input type="checkbox" class="pickSess" value="' + s.id + '" checked></td>' +
+      '<td>' + fmtDate(s.date) + '</td><td>' + esc(s.clientName) + '</td>' +
+      '<td>' + s.startTime + '–' + s.endTime + '</td>' +
+      '<td class="muted">' + esc(s.description) + '<br>' + describeLines(s, null) + '</td>' +
+      '<td class="total-cell">' + money(sessionTotal(s, null)) + '</td></tr>';
+  }
+  box.innerHTML = html + '</table><div class="hint">默认每个客人一张 invoice（编号连续）；勾「合并成一张」就把这个公司的所选 session 放在同一张。</div>';
+}
+
+// Subcontractor Physio: one invoice per client (default) or one combined invoice; shared INV- sequence.
+function generateSubInvoices(ids, invoiceDate, dueDate) {
+  const st = state.settings;
+  const co = getCompany($('invCompany').value);
+  if (!co) { alert('先选公司。'); return null; }
+  const rate = Number(co.rate);
+  if (!(rate > 0)) { alert('不能生成 invoice：' + co.name + ' 没有单价。请先在「设置 → 公司」填单价。'); return null; }
+  const sessions = state.sessions.filter(s => ids.includes(s.id) && isSub(s) && s.companyId === co.id && !s.invoiceId)
+    .sort((a, b) => a.date.localeCompare(b.date) || a.startTime.localeCompare(b.startTime));
+  if (sessions.length !== ids.length) { alert('只能勾选这个公司的 Subcontractor Physio session。'); return null; }
+  const errs = [];
+  findOverlaps(sessions).forEach(m => errs.push('时间重叠：' + m));
+  sessions.forEach(s => { if (!(Number(s.minutes) > 0)) errs.push(fmtDate(s.date) + ' ' + s.clientName + '：数量（分钟）不对'); });
+  if (errs.length) { alert('不能生成 invoice：\n' + Array.from(new Set(errs)).join('\n')); return null; }
+  const groups = [];
+  if ($('invCombine').checked) groups.push(sessions);
+  else {
+    const byName = {};
+    for (const s of sessions) {
+      const k = (s.clientName || '').trim().toLowerCase();
+      if (!byName[k]) { byName[k] = []; groups.push(byName[k]); }
+      byName[k].push(s);
+    }
+  }
+  const title = $('invTitle').value === 'TAX INVOICE' ? 'TAX INVOICE' : 'INVOICE';
+  const gstRate = Math.max(0, Number(co.gstRate) || 0);
+  const made = [];
+  for (const g of groups) {
+    const lines = [];
+    for (const s of g) lines.push.apply(lines, subLines(s, rate));
+    const subtotal = round2(lines.reduce((a, l) => a + l.amount, 0));
+    const gst = round2(subtotal * gstRate / 100);
+    const seq = Math.max(0, parseInt(st.nextInvoiceNumber, 10) || 0);
+    const names = Array.from(new Set(g.map(s => s.clientName)));
+    const inv = {
+      id: uid(), number: formatInvoiceNumber(seq), invoiceType: 'subcontractor', title: title,
+      invoiceDate: invoiceDate, dueDate: dueDate, voided: false, sessionIds: g.map(s => s.id), companyId: co.id,
+      provider: { name: st.providerName, abn: st.abn, address: st.address, email: st.email, phone: st.phone,
+        bankAccountName: st.bankAccountName, bankBsb: st.bankBsb, bankAccountNumber: st.bankAccountNumber },
+      company: { name: co.name, abn: co.abn || '', address: co.address || '', phone: co.phone || '', email: co.email || '' },
+      client: { name: names.join(', '), ndisNumber: '' },
+      lines: lines, subtotal: subtotal, gstRate: gstRate, gst: gst, total: round2(subtotal + gst)
+    };
+    state.invoices.push(inv);
+    st.nextInvoiceNumber = seq + 1;
+    for (const s of g) s.invoiceId = inv.id;
+    made.push(inv);
+  }
+  saveState(); renderAll();
+  showPreview(made[0]);
+  toast('已生成 ' + made.map(i => i.number).join('、'));
+  return made;
+}
 
 $('invGenBtn').addEventListener('click', () => {
   const st = state.settings;
+  if ($('invKind').value === 'subcontractor') {
+    const miss = [];
+    if (!st.abn) miss.push('ABN');
+    if (!st.bankAccountName || !st.bankBsb || !st.bankAccountNumber) miss.push('银行资料');
+    if (miss.length) { alert('先去"设置"补齐：' + miss.join('、')); return; }
+    const sids = Array.from(document.querySelectorAll('.pickSess:checked')).map(x => x.value);
+    if (!sids.length) { alert('至少勾选一条 session。'); return; }
+    const d0 = $('invDate').value || todayStr();
+    generateSubInvoices(sids, d0, $('invDue').value || addDays(d0, subDueDays(getCompany($('invCompany').value))));
+    return;
+  }
   const clientId = $('invClient').value;
   const client = getClient(clientId);
   if (!client) { alert('先添加客人。'); return; }
@@ -1914,7 +2167,55 @@ function physioInvoiceHtml(inv) {
     '</table></div></div>';
 }
 
+function subInvoiceHtml(inv) {
+  const p = inv.provider, co = inv.company || {};
+  let rows = '';
+  for (const l of inv.lines) {
+    rows += '<tr><td class="nw">' + fmtDate(l.serviceDate) + '</td><td>' + esc(l.clientName) + '</td>' +
+      '<td class="desc">' + esc(l.description) + '</td>' +
+      '<td class="num">' + money(l.rate) + '/h</td>' +
+      '<td class="num">' + l.qty + ' mins</td>' +
+      '<td class="num">' + money(l.amount) + '</td></tr>';
+  }
+  const title = inv.title === 'TAX INVOICE' ? 'TAX INVOICE' : 'INVOICE';
+  return '<div class="inv-sheet-physio inv-sheet-sub"><h1 class="inv-title">' + title + '</h1>' +
+    '<div class="inv-top"><table>' +
+    '<tr><td class="lbl">Invoice no:</td><td>' + esc(inv.number) + '</td></tr>' +
+    '<tr><td class="lbl">Invoice date:</td><td>' + fmtDate(inv.invoiceDate) + '</td></tr>' +
+    '<tr><td class="lbl">Due date:</td><td>' + fmtDate(inv.dueDate) + '</td></tr>' +
+    '</table></div>' +
+    '<hr class="inv-rule">' +
+    '<div class="inv-to"><div><b>BILL TO:</b><br><b>' + esc(co.name) + '</b><br>' +
+    (co.abn ? 'ABN ' + esc(co.abn) + '<br>' : '') +
+    (co.address ? esc(co.address) + '<br>' : '') +
+    (co.phone ? 'Phone ' + esc(co.phone) + '<br>' : '') +
+    (co.email ? esc(co.email) : '') +
+    '</div></div>' +
+    '<table class="inv-items inv-items-physio inv-items-sub"><tr><th>DATE</th><th>CLIENT</th><th>SERVICE DESCRIPTION</th>' +
+    '<th class="num">UNIT PRICE</th><th class="num">QTY</th><th class="num">TOTAL</th></tr>' +
+    rows + '</table>' +
+    '<table class="inv-totals">' +
+    '<tr><td class="t-lbl">SUBTOTAL</td><td class="t-val">' + money(inv.subtotal) + '</td></tr>' +
+    '<tr><td class="t-lbl">GST' + (inv.gstRate > 0 ? ' (' + inv.gstRate + '%)' : '') + '</td><td class="t-val">' + money(inv.gst) + '</td></tr>' +
+    '<tr><td class="t-lbl">TOTAL DUE</td><td class="t-val"><b>' + money(inv.total) + '</b></td></tr>' +
+    '</table>' +
+    (inv.gst > 0 ? '' : '<p class="inv-gst-note">No GST charged.</p>') +
+    '<div class="inv-pay"><h3>From</h3><table>' +
+    '<tr><td>Name:</td><td>' + esc(p.name) + '</td></tr>' +
+    '<tr><td>ABN:</td><td>' + esc(p.abn) + '</td></tr>' +
+    (p.address ? '<tr><td>Address:</td><td>' + esc(p.address) + '</td></tr>' : '') +
+    (p.email ? '<tr><td>Email:</td><td>' + esc(p.email) + '</td></tr>' : '') +
+    (p.phone ? '<tr><td>Phone:</td><td>' + esc(p.phone) + '</td></tr>' : '') +
+    '</table></div>' +
+    '<div class="inv-pay"><h3>Payment details</h3><table>' +
+    '<tr><td>Account name:</td><td>' + esc(p.bankAccountName) + '</td></tr>' +
+    '<tr><td>BSB:</td><td>' + esc(p.bankBsb) + '</td></tr>' +
+    '<tr><td>Account number:</td><td>' + esc(p.bankAccountNumber) + '</td></tr>' +
+    '</table></div></div>';
+}
+
 function invoiceHtml(inv) {
+  if (inv.invoiceType === 'subcontractor') return subInvoiceHtml(inv);
   if (inv.invoiceType === 'physio') return physioInvoiceHtml(inv);
   const p = inv.provider, c = inv.client;
   let rows = '';
@@ -1965,14 +2266,16 @@ function showPreview(inv) {
   $('invoiceSheet').innerHTML = invoiceHtml(inv);
   $('previewCard').style.display = '';
   $('previewLabel').textContent = inv.number + ' — ' + inv.client.name;
-  $('printHint').textContent = '存 PDF 时建议文件名：Invoice ' + inv.number + ' - ' + inv.client.name + '.pdf';
+  $('printHint').textContent = inv.invoiceType === 'subcontractor' ? '存 PDF 时建议文件名：' + pdfFilename(inv)
+    : '存 PDF 时建议文件名：Invoice ' + inv.number + ' - ' + inv.client.name + '.pdf';
   $('previewCard').scrollIntoView({ behavior: 'smooth' });
 }
 
 $('printBtn').addEventListener('click', () => {
   if (!previewInvoice) return;
   const old = document.title;
-  document.title = 'Invoice ' + previewInvoice.number + ' - ' + previewInvoice.client.name;
+  document.title = previewInvoice.invoiceType === 'subcontractor' ? pdfFilename(previewInvoice).replace(/\.pdf$/, '')
+    : 'Invoice ' + previewInvoice.number + ' - ' + previewInvoice.client.name;
   window.print();
   document.title = old;
 });
@@ -1999,10 +2302,16 @@ function parseInvoiceSeq(numberStr) {
 
 function invoiceMatchesClient(inv, clientId) {
   if (!clientId) return true;
+  if (inv.invoiceType === 'subcontractor') return false; // company invoices never belong to an NDIS participant
   const c = getClient(clientId);
   if (!c) return false;
   if (inv.client.ndisNumber && c.ndisNumber) return inv.client.ndisNumber === c.ndisNumber;
   return inv.client.name === c.name;
+}
+
+function archiveWho(inv) {
+  if (inv.invoiceType !== 'subcontractor') return esc(inv.client.name);
+  return esc(inv.client.name) + '<div class="muted">' + esc(inv.company ? inv.company.name : '') + '（Subcontractor）</div>';
 }
 
 function getFilteredArchiveInvoices() {
@@ -2021,7 +2330,7 @@ function getFilteredArchiveInvoices() {
     if (from && inv.invoiceDate < from) return false;
     if (to && inv.invoiceDate > to) return false;
     if (q) {
-      const hay = (inv.number + ' ' + inv.client.name + ' ' + money(inv.total)).toLowerCase();
+      const hay = (inv.number + ' ' + inv.client.name + ' ' + (inv.company ? inv.company.name : '') + ' ' + money(inv.total)).toLowerCase();
       if (!hay.includes(q)) return false;
     }
     return true;
@@ -2062,7 +2371,7 @@ function renderArchive() {
         '<input type="number" min="0" step="1" class="arch-seq" data-id="' + inv.id + '" value="' + seq +
         '" style="width:5.5em;margin:0 4px;padding:4px 6px;border:1px solid var(--border);border-radius:6px;">' +
         '<button type="button" class="ghost" data-save-num="' + inv.id + '">保存编号</button></td>' +
-        '<td>' + esc(inv.client.name) + '</td>' +
+        '<td>' + archiveWho(inv) + '</td>' +
         '<td>' + fmtDate(inv.invoiceDate) + '</td>' +
         '<td>' + fmtDate(inv.dueDate) + '</td>' +
         '<td class="total-cell">' + money(inv.total) + '</td>' +
@@ -2079,7 +2388,7 @@ function renderArchive() {
     let vhtml = '<table class="list"><tr><th>编号</th><th>客人</th><th>Invoice 日期</th><th>金额</th><th></th></tr>';
     for (const inv of voided) {
       vhtml += '<tr><td>' + esc(inv.number) + '</td>' +
-        '<td>' + esc(inv.client.name) + '</td>' +
+        '<td>' + archiveWho(inv) + '</td>' +
         '<td>' + fmtDate(inv.invoiceDate) + '</td>' +
         '<td class="total-cell">' + money(inv.total) + '</td>' +
         '<td style="white-space:nowrap;"><button class="ghost" data-view="' + inv.id + '">查看</button> ' +
@@ -2112,7 +2421,9 @@ function loadHtml2Pdf() {
 }
 
 function pdfFilename(inv) {
-  const raw = 'Invoice ' + inv.number + ' - ' + inv.client.name + '.pdf';
+  const raw = inv.invoiceType === 'subcontractor'
+    ? 'Invoice ' + inv.number + ' - ' + (inv.company ? inv.company.name : '') + ' - ' + inv.client.name + '.pdf'
+    : 'Invoice ' + inv.number + ' - ' + inv.client.name + '.pdf';
   return raw.replace(/[\\/:*?"<>|]/g, '_');
 }
 
@@ -2366,6 +2677,75 @@ $('setSaveBtn').addEventListener('click', () => {
   saveState(); renderAll(); syncSupportHint(); toast('设置已保存');
 });
 
+/* ---------- companies (Subcontractor Physio) ---------- */
+let editingCompanyId = null;
+function fillCompanySelect(sel) {
+  const prev = sel.value;
+  const list = state.companies || [];
+  sel.innerHTML = list.length ? list.map(c => '<option value="' + c.id + '">' + esc(c.name) + '</option>').join('')
+    : '<option value="">（先去「设置 → 公司」添加）</option>';
+  if (prev && list.some(c => c.id === prev)) sel.value = prev;
+}
+function clearCompanyForm() {
+  editingCompanyId = null;
+  ['coName', 'coAbn', 'coAddress', 'coPhone', 'coEmail', 'coRate'].forEach(id => { $(id).value = ''; });
+  $('coDueDays').value = '7'; $('coGst').value = '0'; $('coTitle').value = 'INVOICE';
+  $('coCancelBtn').style.display = 'none';
+}
+function renderCompanies() {
+  const list = state.companies || [];
+  $('companyList').innerHTML = list.length
+    ? '<table class="list"><tr><th>公司</th><th>ABN</th><th>单价</th><th>付款期限</th><th>GST</th><th></th></tr>' +
+      list.map(c => '<tr><td>' + esc(c.name) + '<div class="muted">' + esc(c.email || '') + '</div></td><td>' + esc(c.abn || '') + '</td>' +
+        '<td>' + (Number(c.rate) > 0 ? money(c.rate) + '/h' : '<span style="color:#b91c1c">未设</span>') + '</td>' +
+        '<td>' + subDueDays(c) + ' 天</td><td>' + (Number(c.gstRate) || 0) + '%</td>' +
+        '<td style="white-space:nowrap;"><button class="ghost" type="button" data-coedit="' + c.id + '">编辑</button> ' +
+        '<button class="danger" type="button" data-codel="' + c.id + '">删除</button></td></tr>').join('') + '</table>'
+    : '<p class="muted">还没有公司。</p>';
+}
+$('coSaveBtn').addEventListener('click', () => {
+  const name = $('coName').value.trim();
+  if (!name) { alert('公司名称要填。'); return; }
+  const rate = $('coRate').value === '' ? '' : Number($('coRate').value);
+  if (rate !== '' && (isNaN(rate) || rate < 0)) { alert('单价不对。'); return; }
+  const due = parseInt($('coDueDays').value, 10), gst = Number($('coGst').value);
+  if (isNaN(due) || due < 0) { alert('付款期限不对。'); return; }
+  if (isNaN(gst) || gst < 0 || gst > 100) { alert('GST % 不对。'); return; }
+  const data = { name: name, abn: $('coAbn').value.trim(), address: $('coAddress').value.trim(), phone: $('coPhone').value.trim(),
+    email: $('coEmail').value.trim(), rate: rate, dueDays: due, gstRate: gst, title: $('coTitle').value === 'TAX INVOICE' ? 'TAX INVOICE' : 'INVOICE' };
+  if (!state.companies) state.companies = [];
+  if (editingCompanyId) Object.assign(state.companies.find(c => c.id === editingCompanyId), data);
+  else state.companies.push(Object.assign({ id: uid() }, data));
+  saveState(); clearCompanyForm(); renderAll(); toast('公司已保存');
+});
+$('coCancelBtn').addEventListener('click', clearCompanyForm);
+$('companyList').addEventListener('click', e => {
+  const ed = e.target.dataset.coedit, del = e.target.dataset.codel;
+  if (ed) {
+    const c = getCompany(ed); if (!c) return;
+    editingCompanyId = ed;
+    $('coName').value = c.name || ''; $('coAbn').value = c.abn || ''; $('coAddress').value = c.address || '';
+    $('coPhone').value = c.phone || ''; $('coEmail').value = c.email || ''; $('coRate').value = c.rate === '' || c.rate == null ? '' : c.rate;
+    $('coDueDays').value = String(subDueDays(c)); $('coGst').value = String(Number(c.gstRate) || 0);
+    $('coTitle').value = c.title === 'TAX INVOICE' ? 'TAX INVOICE' : 'INVOICE';
+    $('coCancelBtn').style.display = '';
+  }
+  if (del) {
+    if (state.sessions.some(s => s.companyId === del) || state.invoices.some(i => i.companyId === del)) {
+      alert('这个公司已有 session 或 invoice，不能删除。'); return;
+    }
+    if (!confirm('删除这个公司？')) return;
+    state.companies = state.companies.filter(c => c.id !== del);
+    saveState(); renderAll(); toast('已删除');
+  }
+});
+$('sessSubPreset').innerHTML = SUB_PRESETS.map((t, i) => '<option value="' + i + '">' + esc(t) + '</option>').join('') +
+  '<option value="custom">（自己写）</option>';
+$('sessSubPreset').addEventListener('change', () => {
+  const v = $('sessSubPreset').value;
+  if (v !== 'custom') $('sessSubDesc').value = SUB_PRESETS[Number(v)];
+});
+
 /* ---------- backup ---------- */
 $('exportBtn').addEventListener('click', () => {
   const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
@@ -2410,6 +2790,9 @@ $('importFile').addEventListener('change', e => {
 function renderAll() {
   fillClientSelect($('sessClient'), true);
   fillClientSelect($('invClient'), true);
+  fillCompanySelect($('sessCompany'));
+  fillCompanySelect($('invCompany'));
+  renderCompanies();
   renderClients();
   renderSessions();
   renderInvoicePick();
@@ -2421,6 +2804,8 @@ function renderAll() {
 }
 
 /* ================= init ================= */
+fillCompanySelect($('sessCompany'));
+clearCompanyForm();
 clearSessionForm();
 $('invDate').value = todayStr();
 $('invDue').value = addDays(todayStr(), state.settings.paymentTermsDays);
