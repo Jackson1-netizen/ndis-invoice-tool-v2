@@ -29,7 +29,10 @@ function check(name, cond, detail) {
 
 const EXAMPLE_LEDGER = require('./fixture-example.json');
 
-async function openApp(html, { seed = {}, url = '/index.html', ledger = null } = {}) {
+// EXAMPLE v1 (support) ledger served on 127.0.0.1:8765 for the cross-ledger overlap check (read only).
+const EXAMPLE_V1_LEDGER = { settings: { nextInvoiceNumber: 1 }, clients: [{ id: 'v1c1', name: 'EXAMPLE v1 Participant' }],
+  sessions: [], invoices: [] };
+async function openApp(html, { seed = {}, url = '/index.html', ledger = null, v1Ledger = EXAMPLE_V1_LEDGER, v2Ledger = null } = {}) {
   const ctx = await browser.createBrowserContext();
   const page = await ctx.newPage();
   await page.setViewport({ width: 1280, height: 1000 });
@@ -43,6 +46,12 @@ async function openApp(html, { seed = {}, url = '/index.html', ledger = null } =
     if (u.startsWith('data:') || u.startsWith('blob:')) return req.continue();
     requests.push(req.method() + ' ' + u);
     if (ledger && u === 'http://127.0.0.1:8766/data-v2.json') return ledger(req);
+    if (u === 'http://127.0.0.1:8765/data.json' && req.method() === 'GET' && v1Ledger)
+      return req.respond({ status: 200, contentType: 'application/json', headers: { 'Access-Control-Allow-Origin': '*' },
+        body: typeof v1Ledger === 'function' ? v1Ledger() : JSON.stringify(v1Ledger) });
+    if (u === 'http://127.0.0.1:8766/data-v2.json' && req.method() === 'GET' && v2Ledger)
+      return req.respond({ status: 200, contentType: 'application/json', headers: { 'Access-Control-Allow-Origin': '*' },
+        body: typeof v2Ledger === 'function' ? v2Ledger() : JSON.stringify(v2Ledger) });
     return req.abort();
   });
   await page.evaluateOnNewDocument(seedObj => {
@@ -117,12 +126,12 @@ async function printPdf(page, file) {
     check('storage: v1 localStorage value untouched after v2 writes', r1.v1 === V1_SENTINEL);
     check('storage: v2 writes its own key', !!r1.v2 && JSON.parse(r1.v2).clients.some(c => c.name === 'EXAMPLE Isolation'));
     check('storage: only v2 IndexedDB used', r1.dbs.includes('ndis-invoice-disk-v2') && !r1.dbs.includes('ndis-invoice-disk'), r1.dbs);
-    check('storage: no request to 127.0.0.1:8765', !requests.some(u => u.includes('8765')), requests);
-    check('storage: only 8766/data-v2.json contacted for the ledger', requests.filter(u => u.includes('127.0.0.1')).every(u => u.endsWith(' http://127.0.0.1:8766/data-v2.json')), requests);
+    check('storage: never writes to 127.0.0.1:8765 (GET only, for the overlap check)', !requests.some(u => u.includes('8765') && !u.startsWith('GET ')), requests);
+    check('storage: own ledger only via 8766/data-v2.json; v1 ledger only GET (overlap check)', requests.filter(u => u.includes('127.0.0.1')).every(u => u.endsWith(' http://127.0.0.1:8766/data-v2.json') || u === 'GET http://127.0.0.1:8765/data.json'), requests);
     check('storage: no page errors', !dialogs.some(d => d.startsWith('pageerror')), dialogs);
     const src = V2_HTML;
     check('storage: source has no v1 key literals',
-      !/['"]ndis-invoice-tool['"]/.test(src) && !/['"]ndis-invoice-disk['"]/.test(src) && !/['"]invoice-data\.json['"]/.test(src) && !src.includes('8765/data.json'));
+      !/['"]ndis-invoice-tool['"]/.test(src) && !/['"]ndis-invoice-disk['"]/.test(src) && !/['"]invoice-data\.json['"]/.test(src) && (src.match(/8765\/data\.json/g) || []).length === 1 && !/method:\s*['"](PUT|POST)['"][^;]*OTHER_LEDGER_URL|OTHER_LEDGER_URL[^;]*method:\s*['"](PUT|POST)/.test(src));
     await ctx.close();
   }
 
@@ -154,13 +163,13 @@ async function printPdf(page, file) {
     check('ledger 8766: saving PUTs the full ledger to 8766/data-v2.json', puts.length >= 1 &&
       puts[puts.length - 1].clients.length === 2 && puts[puts.length - 1].invoices.length === 0 &&
       puts[puts.length - 1].settings.bankAccountName === 'EXAMPLE FROM FILE', puts.map(p => p.clients.length));
-    check('ledger 8766: never contacts 8765', !requests.some(u => u.includes('8765')), requests);
+    check('ledger 8766: only GETs 8765 (never writes v1)', !requests.some(u => u.includes('8765') && !u.startsWith('GET ')), requests);
     await ctx.close();
   }
 
   /* ---------- 2. support work unchanged vs v1 ---------- */
   if (v1Html) {
-    const a = await openApp(v1Html, { seed: { 'ndis-invoice-tool': ledgerText } });
+    const a = await openApp(v1Html, { seed: { 'ndis-invoice-tool': ledgerText }, v1Ledger: null });
     const b = await openApp(V2_HTML, { seed: { 'ndis-invoice-tool-v2': ledgerText } });
     const g1 = await genSupport(a.page, false), g2 = await genSupport(b.page, true);
     check('support: same invoice number (INV-0015)', g1.inv.number === g2.inv.number && g2.inv.number === 'INV-0015', [g1.inv.number, g2.inv.number]);
@@ -750,7 +759,7 @@ async function printPdf(page, file) {
     check('sub: archive lists company invoices (client + company), NDIS client filter excludes them, search finds company',
       r.archiveShows && r.archiveFilter && r.archiveSearch, r);
     check('sub: no page errors', !dialogs.some(d => d.startsWith('pageerror')), dialogs.filter(d => d.startsWith('pageerror')));
-    check('sub: no request to 127.0.0.1:8765', !requests.some(u => u.includes('8765')), requests);
+    check('sub: never writes to 127.0.0.1:8765', !requests.some(u => u.includes('8765') && !u.startsWith('GET ')), requests);
     await ctx.close();
   }
 
@@ -945,7 +954,7 @@ async function printPdf(page, file) {
     check('exp: re-attach with the same photo restores the page', r.restored);
     check('exp: combine mode puts all expenses on the one invoice', JSON.stringify(r.comb) === JSON.stringify([[287.5, 31.6, 319.1, 2, true]]) && r.combReceiptPages === 0, [r.comb, r.combReceiptPages]);
     check('exp: no page errors', !dialogs.some(d => d.startsWith('pageerror')), dialogs.filter(d => d.startsWith('pageerror')));
-    check('exp: no network requests besides the app', !requests.some(u => !u.includes('ndis-tool.test') && !u.includes('8766')), requests);
+    check('exp: no network requests besides the app', !requests.some(u => !u.includes('ndis-tool.test') && !u.includes('8766') && u !== 'GET http://127.0.0.1:8765/data.json'), requests);
     // print: invoice page + receipt page
     {
       const pg = await (async () => { await page.evaluate(id => { showPreview(state.invoices.find(i => i.id === id)); activateTab('invoice'); }, r.iaId); await new Promise(r => setTimeout(r, 400)); return page; })();
@@ -963,6 +972,233 @@ async function printPdf(page, file) {
         return d.invoices.filter(i => i.expenses).map(i => [i.expenses.length, i.expensesTotal, i.total]); });
       check('exp: an old open tab (ede6f21) keeps expenses when it saves', JSON.stringify(kept) === JSON.stringify([[1, 15.8, 159.55], [2, 31.6, 319.1]]), kept);
       await old.ctx.close();
+    }
+  }
+
+  /* ---------- 11. HARD overlap block across all work + both ledgers (v2 side) ---------- */
+  {
+    const V1L = { settings: { nextInvoiceNumber: 10 }, clients: [{ id: 'v1c1', name: 'EXAMPLE v1 Participant' }],
+      sessions: [
+        { id: 'v1s1', clientId: 'v1c1', date: '2026-12-01', startTime: '10:00', endTime: '11:00', km: 0, invoiceId: 'v1i1', isPublicHoliday: false, isNonFaceToFace: false },
+        // a copy of v2 fixture session s1 (same id) – the v1 sessions were migrated into v2, so copies exist in both ledgers
+        { id: 's1', clientId: 'exc1', date: '2026-11-11', startTime: '09:00', endTime: '12:15', km: 20, invoiceId: null, isPublicHoliday: false, isNonFaceToFace: false }],
+      invoices: [{ id: 'v1i1', number: 'INV-0009', voided: false, sessionIds: ['v1s1'] }] };
+    const v1State = { ledger: V1L };
+    const { ctx, page, dialogs, requests } = await openApp(V2_HTML, { seed: { 'ndis-invoice-tool-v2': ledgerText },
+      v1Ledger: () => v1State.ledger ? JSON.stringify(v1State.ledger) : '{bad json' });
+    const r = await page.evaluate(async () => {
+      const out = {}; const dlg = []; window.alert = m => dlg.push(String(m)); window.confirm = () => true;
+      const last = () => dlg[dlg.length - 1] || '';
+      state.clients.push({ id: 'exc2', name: 'EXAMPLE Participant Two', ndisNumber: '430000002', planManagerName: 'EXAMPLE Plan Managers', planManagerEmail: 'pm@example.com' });
+      state.companies.push({ id: 'coA', name: 'EXAMPLE Company A', abn: '', address: '', phone: '', email: '', rate: 115, dueDays: 7, gstRate: 0, title: 'INVOICE' });
+      state.companies.push({ id: 'coB', name: 'EXAMPLE Company B', abn: '', address: '', phone: '', email: '', rate: 120, dueDays: 7, gstRate: 0, title: 'INVOICE' });
+      saveState(); renderAll();
+      await refreshOtherLedger();
+      const addSupport = (cid, date, st, en) => {
+        clearSessionForm(); $('sessKind').value = 'support'; $('sessKind').dispatchEvent(new Event('change'));
+        $('sessClient').value = cid; $('sessDate').value = date; $('sessDate').dispatchEvent(new Event('change'));
+        $('sessStart').value = st; $('sessEnd').value = en;
+        const n = state.sessions.length; $('sessSaveBtn').click(); return state.sessions.length === n + 1 ? state.sessions[n] : null;
+      };
+      const addPhysio = (cid, date, st, en, tout) => {
+        clearSessionForm(); $('sessClient').value = cid; $('sessKind').value = 'physio'; $('sessKind').dispatchEvent(new Event('change'));
+        $('sessDate').value = date; $('sessDate').dispatchEvent(new Event('change'));
+        $('sessStart').value = st; $('sessEnd').value = en; $('sessTravelOut').value = String(tout || 0); $('sessTravelRet').value = '0';
+        $('sessReportAdd').checked = false;
+        const n = state.sessions.length; $('sessSaveBtn').click(); return state.sessions.length === n + 1 ? state.sessions[n] : null;
+      };
+      const addSub = (co, client, date, st) => {
+        clearSessionForm(); $('sessKind').value = 'subcontractor'; $('sessKind').dispatchEvent(new Event('change'));
+        $('sessCompany').value = co; $('sessSubClient').value = client;
+        $('sessDate').value = date; $('sessDate').dispatchEvent(new Event('change')); $('sessStart').value = st;
+        const n = state.sessions.length; $('sessSaveBtn').click(); return state.sessions.length === n + 1 ? state.sessions[n] : null;
+      };
+      // cross-ledger, 1 minute
+      out.oneMin = !addSupport('exc1', '2026-12-01', '10:59', '12:00');
+      out.oneMinMsg = last();
+      out.touch = !!addSupport('exc1', '2026-12-01', '11:00', '12:00');
+      out.touchBefore = !!addSupport('exc1', '2026-12-01', '09:00', '10:00');
+      // cross-type inside v2 (support vs NDIS physio, different participants)
+      addSupport('exc1', '2026-12-03', '09:00', '10:00');
+      out.crossType = !addPhysio('exc2', '2026-12-03', '09:30', '10:30', 0) && /Support work/.test(last());
+      // physio claimed travel counts (Direct, 20 min travel before 11:00 = 10:40)
+      out.travel = !addPhysio('exc2', '2026-12-03', '10:10', '10:40', 20);
+      out.travelMsg = last();
+      out.travelOk = !!addPhysio('exc2', '2026-12-03', '10:20', '11:20', 20);   // travel 10:00–10:20 touches 10:00 end
+      // cross-company (contractor A vs contractor B) and contractor vs NDIS physio
+      const a1 = addSub('coA', 'EXAMPLE Client A', '2026-12-04', '09:00');           // 09:00–10:15
+      out.crossCompany = !!a1 && !addSub('coB', 'EXAMPLE Client B', '2026-12-04', '10:14') && /EXAMPLE Company A · EXAMPLE Client A/.test(last()) && /Subcontractor Physio/.test(last());
+      out.subTouch = !!addSub('coB', 'EXAMPLE Client B', '2026-12-04', '10:15');
+      out.subVsPhysio = !addPhysio('exc2', '2026-12-04', '08:00', '09:01', 0);
+      // editing a session does not clash with itself (also not with its own copy in the v1 ledger)
+      const s1 = state.sessions.find(x => x.id === 's1');
+      clearSessionForm(); document.querySelector('[data-edit="s1"]').click();
+      const before = dlg.length; $('sessSaveBtn').click();
+      out.editSelf = dlg.length === before && state.sessions.find(x => x.id === 's1').startTime === '09:00';
+      // invoice generation is blocked when a ticked session overlaps (pair injected directly, e.g. old data)
+      state.sessions.push({ id: 'old1', clientId: 'exc1', date: '2026-12-10', startTime: '09:00', endTime: '10:00', km: 0, invoiceId: null, isPublicHoliday: false, isNonFaceToFace: false, supportType: 'community' });
+      state.sessions.push({ id: 'old2', clientId: 'exc1', date: '2026-12-10', startTime: '09:30', endTime: '10:30', km: 0, invoiceId: null, isPublicHoliday: false, isNonFaceToFace: false, supportType: 'community' });
+      state.sessions.push({ id: 'free1', clientId: 'exc1', date: '2026-12-11', startTime: '09:00', endTime: '10:00', km: 0, invoiceId: null, isPublicHoliday: false, isNonFaceToFace: false, supportType: 'community' });
+      saveState(); renderAll();
+      $('invKind').value = 'support'; $('invKind').dispatchEvent(new Event('change'));
+      $('invClient').value = 'exc1'; renderInvoicePick();
+      $('invDate').value = '2026-12-12'; $('invDue').value = '2026-12-26';
+      const pick = ids => document.querySelectorAll('.pickSess').forEach(x => { x.checked = ids.includes(x.value); });
+      pick(['old1']); let n = state.invoices.length; $('invGenBtn').click();
+      out.genBlocked = state.invoices.length === n && /不能生成 invoice/.test(last()) && /09:30–10:30/.test(last());
+      pick(['free1']); n = state.invoices.length; $('invGenBtn').click();
+      out.genUnrelatedOk = state.invoices.length === n + 1;
+      // contractor invoice generation also blocked (cross-ledger): v1 session at 2026-12-01 10:00–11:00
+      state.sessions.push({ id: 'subOld', clientId: '', kind: 'subcontractor', companyId: 'coA', clientName: 'EXAMPLE Client Z', date: '2026-12-01', startTime: '10:30', endTime: '11:45', minutes: 75, description: 'x', invoiceId: null, km: 0 });
+      saveState(); renderAll();
+      $('invKind').value = 'subcontractor'; $('invKind').dispatchEvent(new Event('change'));
+      $('invCompany').value = 'coA'; $('invCompany').dispatchEvent(new Event('change'));
+      pick(['subOld']); n = state.invoices.length; $('invGenBtn').click();
+      out.subGenBlocked = state.invoices.length === n && /INV-0009/.test(last()) && /v1 账本/.test(last());
+      out.dlg = dlg;
+      return out;
+    });
+    check('overlap: 1-minute overlap with a v1 (other ledger) session is blocked', r.oneMin);
+    for (const h of ['01/12/2026 10:00–11:00', 'EXAMPLE v1 Participant', 'Support work', 'Invoice INV-0009', 'v1 账本', '没有例外'])
+      check('overlap: block message names "' + h + '"', r.oneMinMsg.includes(h), r.oneMinMsg);
+    check('overlap: touching ends allowed (11:00 after 10:00–11:00, and 09:00–10:00 before)', r.touch && r.touchBefore, r.dlg.slice(-3));
+    check('overlap: cross-type (NDIS physio vs support of another participant) blocked', r.crossType, r.dlg);
+    check('overlap: claimed physio travel counts (09:50 travel start clashes 09:00–10:00; shown as travel window)', r.travel && r.travelMsg.includes('03/12/2026 10:10–10:40（含 travel 09:50–10:40）') && r.travelMsg.includes('09:00–10:00'), r.travelMsg);
+    check('overlap: physio travel touching a session end is allowed', r.travelOk, r.dlg.slice(-2));
+    check('overlap: cross-company (contractor A vs contractor B) blocked, names company + client', r.crossCompany, r.dlg.slice(-2));
+    check('overlap: contractor touching ends allowed', r.subTouch);
+    check('overlap: NDIS physio vs contractor blocked', r.subVsPhysio);
+    check('overlap: editing a session does not clash with itself (or its copy in the other ledger)', r.editSelf, r.dlg.slice(-2));
+    check('overlap: invoice generation blocked for a ticked overlapping session (names the other one)', r.genBlocked, r.dlg.slice(-1));
+    check('overlap: an existing overlap pair does not block unrelated invoices', r.genUnrelatedOk, r.dlg.slice(-1));
+    check('overlap: contractor invoice generation blocked against the v1 ledger', r.subGenBlocked, r.dlg.slice(-1));
+    // v1 ledger unreadable -> fail-closed
+    v1State.ledger = null;
+    const u = await page.evaluate(async () => {
+      const dlg = []; window.alert = m => dlg.push(String(m));
+      await refreshOtherLedger();
+      clearSessionForm(); $('sessKind').value = 'support'; $('sessKind').dispatchEvent(new Event('change'));
+      $('sessClient').value = 'exc1'; $('sessDate').value = '2026-12-20'; $('sessDate').dispatchEvent(new Event('change'));
+      $('sessStart').value = '09:00'; $('sessEnd').value = '10:00';
+      const n = state.sessions.length; $('sessSaveBtn').click();
+      const saveBlocked = state.sessions.length === n;
+      $('invKind').value = 'support'; $('invKind').dispatchEvent(new Event('change'));
+      $('invClient').value = 'exc1'; renderInvoicePick();
+      document.querySelectorAll('.pickSess').forEach(x => { x.checked = x.value === 's2'; });
+      const m = state.invoices.length; $('invGenBtn').click();
+      return { saveBlocked, genBlocked: state.invoices.length === m, dlg, ok: otherLedger.ok };
+    });
+    check('overlap: v1 ledger unreadable -> session save blocked (fail-closed) with how-to-fix', u.saveBlocked && /读不到 v1/.test(u.dlg[0] || '') && /8765/.test(u.dlg[0] || '') && /NDIS Invoice/.test(u.dlg[0] || ''), u.dlg);
+    check('overlap: v1 ledger unreadable -> invoice generation blocked', u.genBlocked && /读不到 v1/.test(u.dlg[1] || ''), u.dlg);
+    check('overlap: v2 only ever GETs the v1 ledger', requests.some(x => x === 'GET http://127.0.0.1:8765/data.json') && !requests.some(x => x.includes('8765') && !x.startsWith('GET ')), requests.filter(x => x.includes('8765')).slice(0, 3));
+    check('overlap: no page errors (v2)', !dialogs.some(d => d.startsWith('pageerror')), dialogs.filter(d => d.startsWith('pageerror')));
+    await ctx.close();
+  }
+
+  /* ---------- 12. v1 (support tool): same hard block, reads v2 ledger; invoices byte-identical to v1 HEAD ---------- */
+  {
+    const V1_REPO = process.env.V1_REPO || '/workspace/ndis-invoice-tool-v1';
+    const V1_BASE_REF = process.env.V1_BASE_REF || '1e96102';
+    const variants = [];
+    if (fs.existsSync(path.join(V1_REPO, 'index.html'))) {
+      let base = null;
+      try { base = execFileSync('git', ['show', V1_BASE_REF + ':index.html'], { cwd: V1_REPO, encoding: 'utf8' }); } catch (e) { base = null; }
+      variants.push({ name: 'v1 repo', now: fs.readFileSync(path.join(V1_REPO, 'index.html'), 'utf8'), base });
+    }
+    // optional: the PC's local v1 page (D:\...\invoice-tool.html) before/after, from env paths (not in the repo)
+    if (process.env.V1_PC_BASE && process.env.V1_PC_NEW && fs.existsSync(process.env.V1_PC_BASE) && fs.existsSync(process.env.V1_PC_NEW))
+      variants.push({ name: 'v1 PC page', now: fs.readFileSync(process.env.V1_PC_NEW, 'utf8'), base: fs.readFileSync(process.env.V1_PC_BASE, 'utf8') });
+    check('v1: repo checkout + base ' + V1_BASE_REF + ' available', variants.length > 0 && !!variants[0].base);
+    const V2L = { settings: {}, clients: [{ id: 'v2c1', name: 'EXAMPLE v2 Participant' }],
+      companies: [{ id: 'coA', name: 'EXAMPLE Company A' }],
+      sessions: [
+        { id: 'v2sub', kind: 'subcontractor', clientId: '', companyId: 'coA', clientName: 'EXAMPLE Client A', date: '2026-12-02', startTime: '09:00', endTime: '10:15', minutes: 75, invoiceId: 'v2i1' },
+        { id: 'v2ph', kind: 'physio', claimType: 'direct', clientId: 'v2c1', date: '2026-12-05', startTime: '10:00', endTime: '11:00', travelOutMin: 20, travelReturnMin: 15, invoiceId: null }],
+      invoices: [{ id: 'v2i1', number: 'INV-0017', voided: false, invoiceType: 'subcontractor' }] };
+    for (const v of variants) {
+      // (a) byte-identical invoice output vs base when there is no clash
+      if (v.base) {
+        const runGen = async html => {
+          const o = await openApp(html, { seed: { 'ndis-invoice-tool': ledgerText }, v1Ledger: null, v2Ledger: V2L });
+          const g = await o.page.evaluate(async () => {
+            let seed = 7; Math.random = () => { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; };
+            let t = 1763600000000; Date.now = () => (t += 1000);
+            window.alert = () => {};
+            if (typeof refreshV2Ledger === 'function') await refreshV2Ledger();
+            $('invClient').value = state.clients[0].id; renderInvoicePick();
+            $('invDate').value = '2026-11-15'; $('invDue').value = '2026-11-29';
+            $('invGenBtn').click();
+            const inv = state.invoices[state.invoices.length - 1];
+            return { inv: JSON.stringify(inv), html: invoiceHtml(inv), sheet: $('invoiceSheet').innerHTML, ledger: localStorage.getItem(STORAGE_KEY) };
+          });
+          await o.ctx.close();
+          return g;
+        };
+        const A = await runGen(v.base), B = await runGen(v.now);
+        check(v.name + ': invoice record byte-identical to base', A.inv === B.inv && !!B.inv);
+        check(v.name + ': invoice HTML + preview sheet byte-identical to base', A.html === B.html && A.sheet === B.sheet);
+        check(v.name + ': saved ledger byte-identical to base (numbering, totals)', A.ledger === B.ledger);
+      }
+      // (b) the block itself
+      const v2State = { ledger: V2L };
+      const o = await openApp(v.now, { seed: { 'ndis-invoice-tool': ledgerText }, v1Ledger: null,
+        v2Ledger: () => v2State.ledger ? JSON.stringify(v2State.ledger) : '{bad' });
+      const r = await o.page.evaluate(async () => {
+        const out = {}; const dlg = []; window.alert = m => dlg.push(String(m)); window.confirm = () => true;
+        const last = () => dlg[dlg.length - 1] || '';
+        await refreshV2Ledger();
+        const add = (date, st, en) => {
+          $('sessClient').value = state.clients[0].id; $('sessDate').value = date; $('sessStart').value = st; $('sessEnd').value = en;
+          const n = state.sessions.length; $('sessSaveBtn').click(); return state.sessions.length === n + 1 ? state.sessions[n] : null;
+        };
+        out.oneMin = !add('2026-12-02', '10:14', '11:00');
+        out.msg = last();
+        out.touch = !!add('2026-12-02', '10:15', '11:00');
+        out.travel = !add('2026-12-05', '09:30', '09:41') && /含 travel 09:40–11:15/.test(last());
+        out.travelTouch = !!add('2026-12-05', '09:00', '09:40');
+        out.own = !add('2026-12-02', '10:59', '11:30') && /v1 账本/.test(last());
+        // edit self
+        const s = state.sessions.find(x => x.date === '2026-12-02' && x.startTime === '10:15');
+        document.querySelector('[data-edit="' + s.id + '"]').click();
+        const before = dlg.length; $('sessSaveBtn').click();
+        out.editSelf = dlg.length === before;
+        // generation blocked for a pre-existing overlapping session; unrelated still OK
+        state.sessions.push({ id: 'o1', clientId: state.clients[0].id, date: '2026-12-05', startTime: '11:10', endTime: '12:00', km: 0, invoiceId: null, isPublicHoliday: false, isNonFaceToFace: false, supportType: 'community' });
+        saveState(); renderAll();
+        $('invClient').value = state.clients[0].id; renderInvoicePick();
+        const pick = ids => document.querySelectorAll('.pickSess').forEach(x => { x.checked = ids.includes(x.value); });
+        pick(['o1']); let n = state.invoices.length; $('invGenBtn').click();
+        out.genBlocked = state.invoices.length === n && /不能生成 invoice/.test(last()) && /EXAMPLE v2 Participant/.test(last()) && /NDIS Physio/.test(last());
+        pick([s.id]); n = state.invoices.length; $('invGenBtn').click();
+        out.genOk = state.invoices.length === n + 1;
+        out.dlg = dlg;
+        return out;
+      });
+      check(v.name + ': 1-minute overlap with a v2 contractor session blocked', r.oneMin);
+      for (const h of ['02/12/2026 09:00–10:15', 'EXAMPLE Company A · EXAMPLE Client A', 'Subcontractor Physio', 'Invoice INV-0017', 'v2 账本'])
+        check(v.name + ': message names "' + h + '"', r.msg.includes(h), r.msg);
+      check(v.name + ': touching ends allowed', r.touch, r.dlg.slice(-2));
+      check(v.name + ': v2 physio claimed travel counts; touching it is allowed', r.travel && r.travelTouch, r.dlg.slice(-2));
+      check(v.name + ': overlap with its own (v1) sessions blocked', r.own);
+      check(v.name + ': editing a session does not clash with itself', r.editSelf, r.dlg.slice(-1));
+      check(v.name + ': invoice generation blocked for an overlapping session, unrelated one OK', r.genBlocked && r.genOk, r.dlg.slice(-2));
+      v2State.ledger = null;
+      const u = await o.page.evaluate(async () => {
+        const dlg = []; window.alert = m => dlg.push(String(m));
+        await refreshV2Ledger();
+        $('sessClient').value = state.clients[0].id; $('sessDate').value = '2026-12-20'; $('sessStart').value = '09:00'; $('sessEnd').value = '10:00';
+        const n = state.sessions.length; $('sessSaveBtn').click();
+        const saveBlocked = state.sessions.length === n;
+        $('invClient').value = state.clients[0].id; renderInvoicePick();
+        document.querySelectorAll('.pickSess').forEach((x, i) => { x.checked = i === 0; });
+        const m = state.invoices.length; $('invGenBtn').click();
+        return { saveBlocked, genBlocked: state.invoices.length === m, dlg };
+      });
+      check(v.name + ': v2 ledger unreadable -> save and generate blocked with how-to-fix', u.saveBlocked && u.genBlocked &&
+        /读不到 v2/.test(u.dlg[0] || '') && /8766/.test(u.dlg[0] || '') && /Open NDIS Invoice v2/.test(u.dlg[0] || ''), u.dlg);
+      check(v.name + ': never writes to the v2 ledger', !o.requests.some(x => x.includes('8766') && !x.startsWith('GET ')), o.requests.filter(x => x.includes('8766')).slice(0, 3));
+      check(v.name + ': no page errors', !o.dialogs.some(d => d.startsWith('pageerror')), o.dialogs.filter(d => d.startsWith('pageerror')));
+      await o.ctx.close();
     }
   }
 

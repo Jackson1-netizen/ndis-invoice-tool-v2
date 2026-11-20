@@ -702,7 +702,8 @@ function loadState() {
 }
 let state = loadState();
 // v2's own local ledger server (D:\Grokbot\NDIS Invoices, started by "NDIS Invoice v2 (local).bat") on port 8766.
-// It serves ONLY the v2 ledger (invoice-data-v2.json). v1's server on port 8765 is never contacted.
+// It serves ONLY the v2 ledger (invoice-data-v2.json). v1's server on port 8765 is only READ (GET) for the
+// cross-ledger time-overlap block; v2 never writes to it.
 const LEDGER_URL = 'http://127.0.0.1:8766/data-v2.json';
 const LEDGER_DIR_HINT = 'D:\\Grokbot\\NDIS Invoices\\ledger';
 const IDB_NAME = 'ndis-invoice-disk-v2';
@@ -1292,21 +1293,95 @@ function sessionWindow(s) {
   }
   return [a, b];
 }
+// Invoice generation: every ticked session is checked against ALL sessions in both ledgers (v2 + v1).
+// Returns error lines (empty = ok). Fail-closed when the v1 ledger cannot be read.
 function findOverlaps(sessions) {
-  const msgs = [];
-  for (const s of sessions) {
-    const [a, b] = sessionWindow(s);
-    for (const o of state.sessions) {
-      if (o.id === s.id || o.date !== s.date) continue;
-      const [c, d] = sessionWindow(o);
-      if (Math.min(b, d) - Math.max(a, c) > 0) {
-        msgs.push(fmtDate(s.date) + ' ' + s.startTime + '–' + s.endTime + ' 和 ' +
-          sessionClientName(o) + ' ' + o.startTime + '–' + o.endTime + '（' + sessionTypeLabel(o) + '）重叠');
-      }
-    }
-  }
-  return msgs;
+  const block = workOverlapBlock(sessions);
+  return block ? [block] : [];
 }
+
+/* ---------- HARD block: no time overlap across ALL work (v2 physio / contractor / support + v1 support) ----------
+   Jackson works alone, so any clash of >= 1 minute is refused (touching ends are fine). No override.
+   Time that counts = the time each invoice claims: session start–end; NDIS physio Direct also its claimed
+   Provider Travel before/after (printed with times on the invoice); Subcontractor = stored start–end (75 min incl.
+   notes, the billed block). The other tool's ledger (v1, 127.0.0.1:8765) is READ ONLY. */
+const OTHER_LEDGER_URL = 'http://127.0.0.1:8765/data.json';
+const OTHER_LEDGER_MAX_AGE_MS = 15000;
+let otherLedger = { ok: false, at: -1e12, err: '还没读取', sessions: [], busy: null };
+const nowMs = () => (window.performance && performance.now ? performance.now() : 0);
+function refreshOtherLedger() {
+  if (otherLedger.busy) return otherLedger.busy;
+  const ctl = typeof AbortController === 'function' ? new AbortController() : null;
+  const timer = ctl ? setTimeout(() => ctl.abort(), 3000) : null;
+  otherLedger.busy = fetch(OTHER_LEDGER_URL, { cache: 'no-store', signal: ctl ? ctl.signal : undefined })
+    .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+    .then(d => {
+      if (!d || !Array.isArray(d.sessions)) throw new Error('v1 账本格式不对');
+      const clients = {}, invs = {};
+      (d.clients || []).forEach(c => { if (c && c.id) clients[c.id] = c.name || '?'; });
+      (d.invoices || []).forEach(i => { if (i && i.id) invs[i.id] = i; });
+      otherLedger.sessions = d.sessions.filter(x => x && x.date && x.startTime && x.endTime).map(x => {
+        const inv = x.invoiceId ? invs[x.invoiceId] : null;
+        return { id: x.id, date: x.date, startTime: x.startTime, endTime: x.endTime, a: toMin(x.startTime), b: toMin(x.endTime),
+          client: clients[x.clientId] || '?', type: 'Support work', invoice: inv && !inv.voided ? inv.number : '', ledger: 'v1' };
+      });
+      otherLedger.ok = true; otherLedger.err = ''; otherLedger.at = nowMs();
+    })
+    .catch(e => { otherLedger.ok = false; otherLedger.err = (e && e.name === 'AbortError') ? '超时' : String(e && e.message || e); })
+    .finally(() => { if (timer) clearTimeout(timer); otherLedger.busy = null; });
+  return otherLedger.busy;
+}
+function otherLedgerFailMessage() {
+  return '不能继续：读不到 v1 Support 账本（127.0.0.1:8765），没办法检查时间重叠。\n' +
+    'Cannot check time overlaps: the v1 support ledger (127.0.0.1:8765) cannot be read.\n' +
+    '修复：双击桌面「NDIS Invoice」（v1）让它的本机服务启动，等 3 秒再按一次。\n' +
+    '（网页版也要本机 v1 服务开着；浏览器问「访问本地网络」时请允许。）\n错误：' + (otherLedger.err || '?');
+}
+function invoiceNoOf(invoiceId) {
+  const inv = invoiceId ? state.invoices.find(i => i.id === invoiceId) : null;
+  return inv && !inv.voided ? inv.number : '';
+}
+function allWorkSessions() {
+  const own = state.sessions.filter(o => o && o.date && o.startTime && o.endTime).map(o => {
+    const [a, b] = sessionWindow(o);
+    return { id: o.id, date: o.date, startTime: o.startTime, endTime: o.endTime, a: a, b: b, client: sessionClientName(o),
+      type: isSub(o) ? 'Subcontractor Physio' : isPhysio(o) ? 'NDIS Physio · ' + PHYSIO_CLAIM_LABEL[physioClaimOf(o)] : 'Support work',
+      invoice: invoiceNoOf(o.invoiceId), ledger: 'v2' };
+  });
+  return own.concat(otherLedger.sessions);
+}
+function clashLine(o) {
+  const w = (o.a !== toMin(o.startTime) || o.b !== toMin(o.endTime)) ? '（含 travel ' + minToTime(o.a) + '–' + minToTime(o.b) + '）' : '';
+  return '• ' + fmtDate(o.date) + ' ' + o.startTime + '–' + o.endTime + w + ' · ' + o.client + ' · ' + o.type +
+    ' · ' + (o.invoice ? 'Invoice ' + o.invoice : '未开票 / not invoiced') + ' · ' + o.ledger + ' 账本';
+}
+// cands: v2-shaped sessions (new/edited ones use their own id or '__new'). Returns '' when ok, else the block message.
+function workOverlapBlock(cands) {
+  if (!otherLedger.ok || nowMs() - otherLedger.at > OTHER_LEDGER_MAX_AGE_MS) { refreshOtherLedger(); return otherLedgerFailMessage(); }
+  const all = allWorkSessions(), seen = {}, lines = [], heads = [];
+  for (const c of cands) {
+    const [a, b] = sessionWindow(c);
+    let hit = false;
+    for (const o of all) {
+      if (o.id === c.id || o.date !== c.date) continue;
+      if (Math.min(b, o.b) - Math.max(a, o.a) < 1) continue;
+      hit = true;
+      const k = o.ledger + ':' + o.id;
+      if (seen[k]) continue; seen[k] = 1;
+      lines.push(clashLine(o));
+    }
+    if (hit) heads.push('这条 / this: ' + fmtDate(c.date) + ' ' + c.startTime + '–' + c.endTime +
+      ((a !== toMin(c.startTime) || b !== toMin(c.endTime)) ? '（含 travel ' + minToTime(a) + '–' + minToTime(b) + '）' : ''));
+  }
+  if (!lines.length) return '';
+  return '时间重叠，不能继续（没有例外）/ Time overlap – blocked, no override:\n' +
+    heads.filter((v, i, arr) => arr.indexOf(v) === i).join('\n') +
+    '\n和这些已有的 session 重叠 / clashes with:\n' + lines.join('\n');
+}
+refreshOtherLedger();
+setInterval(refreshOtherLedger, 3000);
+window.addEventListener('focus', () => { refreshOtherLedger(); });
+document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshOtherLedger(); });
 function sessionTypeLabel(s) {
   if (isSub(s)) return 'Subcontractor Physio';
   return isPhysio(s) ? 'Physio · ' + PHYSIO_CLAIM_LABEL[physioClaimOf(s)] : SUPPORT_TYPE_LABEL[supportTypeOf(s)];
@@ -1725,14 +1800,6 @@ function clearSessionForm() {
 }
 
 // Other sessions (any type, any client) whose time window overlaps the candidate: Jackson's own time.
-function overlappingSessions(cand, onlyOther) {
-  const [a, b] = sessionWindow(cand);
-  return state.sessions.filter(o => o.id !== cand.id && o.date === cand.date && (!onlyOther || onlyOther(o)) &&
-    (function () { const [c, d] = sessionWindow(o); return Math.min(b, d) - Math.max(a, c) > 0; })());
-}
-function overlapText(list) {
-  return list.map(o => fmtDate(o.date) + ' ' + o.startTime + '–' + o.endTime + ' ' + sessionClientName(o) + '（' + sessionTypeLabel(o) + '）').join('\n');
-}
 function saveSubSession() {
   const companyId = $('sessCompany').value;
   const clientName = $('sessSubClient').value.trim();
@@ -1751,8 +1818,7 @@ function saveSubSession() {
     km: 0, isPublicHoliday: false, isNonFaceToFace: false };
   const clientAddress = $('sessSubAddr').value.trim();
   if (clientAddress) data.clientAddress = clientAddress;
-  const clash = overlappingSessions(Object.assign({ id: editingSessionId || '__new' }, data));
-  if (clash.length) { alert('时间重叠，不能保存 / Time overlaps another session:\n' + overlapText(clash)); return; }
+  { const ob = workOverlapBlock([Object.assign({ id: editingSessionId || '__new' }, data)]); if (ob) { alert(ob); return; } }
   if (editingSessionId) {
     const ex = state.sessions.find(x => x.id === editingSessionId);
     ['claimType', 'physioDescription', 'travelOutMin', 'travelReturnMin', 'parkingTolls', 'parkingTollsNote', 'supportType', 'clientAddress'].forEach(k => { delete ex[k]; });
@@ -1799,9 +1865,8 @@ $('sessSaveBtn').addEventListener('click', () => {
       const rerrs = physioSessionErrors(report);
       if (rerrs.length) { alert(rerrs.join('\n')); return; }
     }
-    { const clash = [pdata].concat(report ? [report] : []).reduce((acc, x, i) =>
-        acc.concat(overlappingSessions(Object.assign({ id: i === 0 ? (editingSessionId || '__new') : '__new2' }, x), isSub)), []);
-      if (clash.length) { alert('时间重叠，不能保存 / Time overlaps another session:\n' + overlapText(clash)); return; } }
+    { const ob = workOverlapBlock([pdata].concat(report ? [report] : []).map((x, i) =>
+        Object.assign({ id: i === 0 ? (editingSessionId || '__new') : '__new2' }, x))); if (ob) { alert(ob); return; } }
     if (editingSessionId) {
       const exp = state.sessions.find(s => s.id === editingSessionId);
       ['companyId', 'clientName', 'clientAddress', 'minutes', 'description'].forEach(k => { delete exp[k]; });
@@ -1820,8 +1885,7 @@ $('sessSaveBtn').addEventListener('click', () => {
   const data = { clientId: clientId, date: date, startTime: start, endTime: end,
                  km: km, isPublicHoliday: $('sessPH').checked, isNonFaceToFace: isNF2F,
                  supportType: supportType };
-  { const clash = overlappingSessions(Object.assign({ id: editingSessionId || '__new' }, data), isSub);
-    if (clash.length) { alert('时间重叠，不能保存 / Time overlaps another session:\n' + overlapText(clash)); return; } }
+  { const ob = workOverlapBlock([Object.assign({ id: editingSessionId || '__new' }, data)]); if (ob) { alert(ob); return; } }
   if (editingSessionId) {
     const ex = state.sessions.find(s => s.id === editingSessionId);
     if (ex && ex.kind === 'subcontractor') { ['companyId', 'clientName', 'clientAddress', 'minutes', 'description'].forEach(k => { delete ex[k]; }); }
@@ -1986,7 +2050,7 @@ function generateSubInvoices(ids, invoiceDate, dueDate) {
     .sort((a, b) => a.date.localeCompare(b.date) || a.startTime.localeCompare(b.startTime));
   if (sessions.length !== ids.length) { alert('只能勾选这个公司的 Subcontractor Physio session。'); return null; }
   const errs = [];
-  findOverlaps(sessions).forEach(m => errs.push('时间重叠：' + m));
+  findOverlaps(sessions).forEach(m => errs.push(m));
   sessions.forEach(s => { if (!(Number(s.minutes) > 0)) errs.push(fmtDate(s.date) + ' ' + s.clientName + '：数量（分钟）不对'); });
   if (errs.length) { alert('不能生成 invoice：\n' + Array.from(new Set(errs)).join('\n')); return null; }
   const expGroups = assignExpenses(sessions, pendingExpenses, $('invCombine').checked);
@@ -2038,6 +2102,7 @@ function generateSubInvoices(ids, invoiceDate, dueDate) {
   return made;
 }
 
+['sessSaveBtn', 'invGenBtn'].forEach(id => $(id).addEventListener('pointerdown', () => { refreshOtherLedger(); }));
 $('invGenBtn').addEventListener('click', () => {
   const st = state.settings;
   if ($('invKind').value === 'subcontractor') {
@@ -2071,6 +2136,10 @@ $('invGenBtn').addEventListener('click', () => {
       if (sd.length) sdErrs.push(sameDayMessage(sessionCategory(s), s.date, sd));
     }
     if (sdErrs.length) { alert('不能生成 invoice / Cannot generate invoice：\n' + Array.from(new Set(sdErrs)).join('\n')); return; } }
+  if ($('invKind').value !== 'physio') {
+    const ob = workOverlapBlock(state.sessions.filter(s => ids.includes(s.id)));
+    if (ob) { alert('不能生成 invoice / Cannot generate invoice：\n' + ob); return; }
+  }
   const invoiceDate = $('invDate').value || todayStr();
   const dueDate = $('invDue').value || addDays(invoiceDate, st.paymentTermsDays);
   if ($('invKind').value === 'physio') { generatePhysioInvoice(client, ids, invoiceDate, dueDate); return; }
@@ -2117,7 +2186,7 @@ function generatePhysioInvoice(client, ids, invoiceDate, dueDate) {
     const cap = PHYSIO_CAPS[l.rateKind]; // parking/tolls: actual cost, no cap
     if (cap != null && l.rate > cap + 1e-9) errs.push(l.lineItem + ' ' + l.claimType + ' 单价 ' + money(l.rate) + ' 超过 NDIS 上限 ' + money(cap));
   }
-  findOverlaps(sessions).forEach(m => errs.push('时间重叠：' + m));
+  findOverlaps(sessions).forEach(m => errs.push(m));
   if (errs.length) { alert('不能生成 invoice：\n' + Array.from(new Set(errs)).join('\n')); return null; }
   const payments = Math.max(0, round2(Number($('invPayments').value) || 0));
   const subtotal = round2(lines.reduce((a, l) => a + l.amount, 0));
