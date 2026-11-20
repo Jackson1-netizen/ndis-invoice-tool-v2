@@ -75,3 +75,21 @@ company, not to an NDIS participant: no NDIS number, item codes or plan manager 
   Line amount = $/hour × minutes / 60. An empty price blocks issuing.
 - These sessions are **not** part of the NDIS same-day rule (app and `tools/check_same_day.py` both ignore them),
   but a time overlap with any other session is still blocked in both directions.
+
+### Expenses (杂费) and client address — Subcontractor Physio only
+
+- **Client address (optional):** in the session form. When filled it prints under the client name on the line and in a
+  `CLIENT:` block next to BILL TO. When empty, nothing changes (output byte-identical to before).
+- **Expenses:** on 出 Invoice → Subcontractor Physio, add lines (date, client, description, receipt ref, amount actually paid,
+  receipt photo). They are added to the invoice when you click 生成 Invoice: separate mode puts each expense on the invoice of
+  the same client (blocked if that client has no ticked session); combined mode puts all on the one invoice.
+  Totals: SERVICES SUBTOTAL + EXPENSES + GST ($0.00) = TOTAL DUE, with the note "No GST charged (not registered for GST)".
+  Expenses are billed at the GST-inclusive amount on the receipt; no GST is added. They do not touch the same-day or overlap checks.
+- **Receipts:** each photo becomes an extra page at the end of the invoice (print and PDF export). The image is kept only in this
+  browser's IndexedDB (`ndis-invoice-receipts-v2`, shrunk to max 1600 px); the ledger stores only the file name and the SHA-256 of
+  the original file. If the image is missing (other browser, cleared data), the preview shows a warning and a
+  「重新附上收据照片」 button that accepts only the same photo (hash check). Keep the original photo files in a local folder.
+- **Older open tabs:** expenses live inside the invoice objects (no new top-level ledger key), so an older tab keeps them when it
+  saves. Reload open tabs anyway so they show the new layout.
+- NDIS Physio and Support Worker are unchanged; a test renders all three types against release ede6f21 and requires
+  byte-identical HTML and ledger when no expenses / address are used.

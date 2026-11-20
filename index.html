@@ -112,6 +112,13 @@
   .inv-sheet-sub .inv-to { margin-bottom: 10px; }
   .inv-sheet-sub .inv-totals td { padding: 3px 8px; }
   .inv-sheet-sub .inv-pay { margin-top: 16px; }
+  .inv-sheet-sub .inv-client-addr { font-size: 9px; color: #444; }
+  .inv-sheet-sub h3.inv-exp-h { font-size: 12px; margin: 14px 0 4px; }
+  .inv-receipt-page { break-before: page; page-break-before: always; padding-top: 6px; }
+  .inv-receipt-page h2 { font-size: 15px; margin: 0 0 4px; }
+  .inv-receipt-page p { font-size: 11px; margin: 0 0 8px; }
+  .inv-receipt-page img { display: block; max-width: 100%; max-height: 225mm; margin: 0 auto; border: 1px solid #ccc; }
+  .inv-receipt-missing { border: 2px dashed #b91c1c; color: #b91c1c; padding: 14px; font-size: 12px; }
   .inv-items-sub td.desc { width: 46%; }
   .inv-pay h3 { font-size: 13px; text-decoration: underline; margin: 0 0 6px; }
   .inv-pay td { padding: 2px 12px 2px 0; }
@@ -175,6 +182,9 @@
       </label>
       <label class="field sub-only">客人名字（印在 invoice）
         <input id="sessSubClient" placeholder="e.g. Jim">
+      </label>
+      <label class="field sub-only">客人地址（可选，印在 invoice）
+        <input id="sessSubAddr" placeholder="可留空">
       </label>
       <label class="field sub-only">服务内容（预设）
         <select id="sessSubPreset"></select>
@@ -296,6 +306,19 @@
       </label>
     </div>
     <div id="invSessionPick" style="margin-top:14px;"></div>
+    <div id="invExpBox" style="display:none; margin-top:14px; border-top:1px solid var(--border); padding-top:10px;">
+      <h3 style="margin:0 0 6px; font-size:15px;">杂费 / Expenses（实报实销，按收据实际金额，不加 GST）</h3>
+      <div class="grid">
+        <label class="field">日期<input type="date" id="expDate"></label>
+        <label class="field">客人（要和 session 的客人名字一样）<input id="expClient" list="expClientList"><datalist id="expClientList"></datalist></label>
+        <label class="field" style="grid-column: 1 / -1;">描述<input id="expDesc" placeholder="e.g. Pool entry"></label>
+        <label class="field">收据编号 / Receipt ref<input id="expRef" placeholder="e.g. No. 12345"></label>
+        <label class="field">金额 $（收据实付金额）<input type="number" id="expAmount" min="0.01" step="0.01"></label>
+        <label class="field">收据照片（只存在这台电脑的浏览器）<input type="file" id="expFile" accept="image/*"></label>
+      </div>
+      <button class="ghost" type="button" id="expAddBtn" style="margin-top:8px;">加这条杂费</button>
+      <div id="expList" style="margin-top:8px;"></div>
+    </div>
     <div style="margin-top:14px;">
       <button class="primary" id="invGenBtn">生成 Invoice</button>
     </div>
@@ -306,6 +329,8 @@
     <div style="margin-bottom:12px; display:flex; gap:10px; align-items:center;">
       <button class="primary" id="printBtn">保存为 PDF / 打印</button>
       <span class="hint" id="printHint"></span>
+      <label class="ghost" id="receiptRepickField" style="display:none; cursor:pointer;">重新附上收据照片
+        <input type="file" id="receiptRepick" accept="image/*" style="display:none;"></label>
     </div>
     <div class="sheet-wrap">
       <div id="printArea"><div class="invoice-sheet" id="invoiceSheet"></div></div>
@@ -1146,7 +1171,7 @@ function subLines(session, rateOverride) {
   return [{ serviceDate: session.date, startTime: session.startTime, endTime: session.endTime,
     clientName: session.clientName || '', description: session.description || '', lineItem: '', claimType: '',
     rateKind: 'subcontractor', qty: minutes, unit: 'min', rate: rate, gst: 0,
-    amount: round2(rate * minutes / 60) }];
+    amount: round2(rate * minutes / 60) }].map(l => (session.clientAddress ? Object.assign(l, { clientAddress: session.clientAddress }) : l));
 }
 function sessionClientName(s) {
   if (isSub(s)) { const co = getCompany(s.companyId); return (co ? co.name : '?') + ' · ' + (s.clientName || '?'); }
@@ -1689,7 +1714,7 @@ function clearSessionForm() {
   $('sessTravelOut').value = ''; $('sessTravelRet').value = '';
   $('sessParking').value = ''; $('sessParkingNote').value = '';
   $('sessReportAdd').checked = true; $('sessReportMin').value = '15'; $('sessReportDesc').value = 'Report writing';
-  $('sessSubClient').value = ''; $('sessSubPreset').value = '0'; $('sessSubDesc').value = SUB_PRESETS[0];
+  $('sessSubClient').value = ''; $('sessSubAddr').value = ''; $('sessSubPreset').value = '0'; $('sessSubDesc').value = SUB_PRESETS[0];
   $('sessSubMin').value = String(SUB_DEFAULT_MIN);
   syncSessKmVisibility();
   syncSupportHint();
@@ -1724,11 +1749,13 @@ function saveSubSession() {
   const data = { clientId: '', kind: 'subcontractor', companyId: companyId, clientName: clientName, date: date,
     startTime: start, endTime: minToTime(endMin), minutes: minutes, description: description,
     km: 0, isPublicHoliday: false, isNonFaceToFace: false };
+  const clientAddress = $('sessSubAddr').value.trim();
+  if (clientAddress) data.clientAddress = clientAddress;
   const clash = overlappingSessions(Object.assign({ id: editingSessionId || '__new' }, data));
   if (clash.length) { alert('时间重叠，不能保存 / Time overlaps another session:\n' + overlapText(clash)); return; }
   if (editingSessionId) {
     const ex = state.sessions.find(x => x.id === editingSessionId);
-    ['claimType', 'physioDescription', 'travelOutMin', 'travelReturnMin', 'parkingTolls', 'parkingTollsNote', 'supportType'].forEach(k => { delete ex[k]; });
+    ['claimType', 'physioDescription', 'travelOutMin', 'travelReturnMin', 'parkingTolls', 'parkingTollsNote', 'supportType', 'clientAddress'].forEach(k => { delete ex[k]; });
     Object.assign(ex, data);
   } else {
     state.sessions.push(Object.assign({ id: uid(), invoiceId: null }, data));
@@ -1777,7 +1804,7 @@ $('sessSaveBtn').addEventListener('click', () => {
       if (clash.length) { alert('时间重叠，不能保存 / Time overlaps another session:\n' + overlapText(clash)); return; } }
     if (editingSessionId) {
       const exp = state.sessions.find(s => s.id === editingSessionId);
-      ['companyId', 'clientName', 'minutes', 'description'].forEach(k => { delete exp[k]; });
+      ['companyId', 'clientName', 'clientAddress', 'minutes', 'description'].forEach(k => { delete exp[k]; });
       Object.assign(exp, pdata);
     } else {
       state.sessions.push(Object.assign({ id: uid(), invoiceId: null }, pdata));
@@ -1797,7 +1824,7 @@ $('sessSaveBtn').addEventListener('click', () => {
     if (clash.length) { alert('时间重叠，不能保存 / Time overlaps another session:\n' + overlapText(clash)); return; } }
   if (editingSessionId) {
     const ex = state.sessions.find(s => s.id === editingSessionId);
-    if (ex && ex.kind === 'subcontractor') { ['companyId', 'clientName', 'minutes', 'description'].forEach(k => { delete ex[k]; }); }
+    if (ex && ex.kind === 'subcontractor') { ['companyId', 'clientName', 'clientAddress', 'minutes', 'description'].forEach(k => { delete ex[k]; }); }
     if (ex && ex.kind) { delete ex.kind; delete ex.claimType; delete ex.physioDescription; delete ex.travelOutMin; delete ex.travelReturnMin; delete ex.parkingTolls; delete ex.parkingTollsNote; }
     Object.assign(state.sessions.find(s => s.id === editingSessionId), data);
   } else {
@@ -1848,7 +1875,7 @@ $('sessList').addEventListener('click', e => {
     $('sessSupportType').value = supportTypeOf(s);
     $('sessKind').value = isPhysio(s) ? 'physio' : isSub(s) ? 'subcontractor' : 'support';
     if (isSub(s)) {
-      $('sessCompany').value = s.companyId; $('sessSubClient').value = s.clientName || '';
+      $('sessCompany').value = s.companyId; $('sessSubClient').value = s.clientName || ''; $('sessSubAddr').value = s.clientAddress || '';
       const pi = SUB_PRESETS.indexOf(s.description); $('sessSubPreset').value = pi >= 0 ? String(pi) : 'custom';
       $('sessSubDesc').value = s.description || ''; $('sessSubMin').value = String(s.minutes || SUB_DEFAULT_MIN);
     }
@@ -1903,7 +1930,7 @@ function syncInvKind() {
   const sub = $('invKind').value === 'subcontractor';
   $('invPaymentsField').style.display = $('invKind').value === 'physio' ? '' : 'none';
   $('invClientField').style.display = sub ? 'none' : '';
-  ['invCompanyField', 'invTitleField', 'invCombineField'].forEach(id => { $(id).style.display = sub ? '' : 'none'; });
+  ['invCompanyField', 'invTitleField', 'invCombineField', 'invExpBox'].forEach(id => { $(id).style.display = sub ? '' : 'none'; });
   if (sub) syncSubCompanyDefaults();
 }
 function syncSubCompanyDefaults() {
@@ -1933,6 +1960,8 @@ function renderSubInvoicePick() {
   if (!co) { box.innerHTML = '<p class="muted">先在「设置 → 公司」添加公司，再加 Subcontractor Physio session。</p>'; return; }
   const open = state.sessions.filter(s => !s.invoiceId && isSub(s) && s.companyId === co.id)
     .sort((a, b) => a.date.localeCompare(b.date) || a.startTime.localeCompare(b.startTime));
+  $('expClientList').innerHTML = Array.from(new Set(open.map(s => s.clientName))).map(n => '<option value="' + esc(n) + '">').join('');
+  if (!$('expDate').value && $('invDate').value) $('expDate').value = $('invDate').value;
   let html = Number(co.rate) > 0 ? '' : '<div class="sameday-block">' + esc(co.name) + ' 还没有单价：先在「设置 → 公司」填单价，否则不能出 invoice。</div>';
   if (!open.length) { box.innerHTML = html + '<p class="muted">这个公司没有待开票的 session。</p>'; return; }
   html += '<table class="list"><tr><th></th><th>日期</th><th>客人</th><th>时间</th><th>明细</th><th>合计</th></tr>';
@@ -1960,6 +1989,8 @@ function generateSubInvoices(ids, invoiceDate, dueDate) {
   findOverlaps(sessions).forEach(m => errs.push('时间重叠：' + m));
   sessions.forEach(s => { if (!(Number(s.minutes) > 0)) errs.push(fmtDate(s.date) + ' ' + s.clientName + '：数量（分钟）不对'); });
   if (errs.length) { alert('不能生成 invoice：\n' + Array.from(new Set(errs)).join('\n')); return null; }
+  const expGroups = assignExpenses(sessions, pendingExpenses, $('invCombine').checked);
+  if (!expGroups) return null;
   const groups = [];
   if ($('invCombine').checked) groups.push(sessions);
   else {
@@ -1989,11 +2020,18 @@ function generateSubInvoices(ids, invoiceDate, dueDate) {
       client: { name: names.join(', '), ndisNumber: '' },
       lines: lines, subtotal: subtotal, gstRate: gstRate, gst: gst, total: round2(subtotal + gst)
     };
+    const exps = expGroups(g);
+    if (exps.length) {
+      inv.expenses = exps.map(e => JSON.parse(JSON.stringify(e)));
+      inv.expensesTotal = round2(exps.reduce((a, e) => a + e.amount, 0));
+      inv.total = round2(inv.total + inv.expensesTotal);
+    }
     state.invoices.push(inv);
     st.nextInvoiceNumber = seq + 1;
     for (const s of g) s.invoiceId = inv.id;
     made.push(inv);
   }
+  pendingExpenses = []; renderPendingExpenses();
   saveState(); renderAll();
   showPreview(made[0]);
   toast('已生成 ' + made.map(i => i.number).join('、'));
@@ -2169,9 +2207,11 @@ function physioInvoiceHtml(inv) {
 
 function subInvoiceHtml(inv) {
   const p = inv.provider, co = inv.company || {};
+  const hasExp = Array.isArray(inv.expenses) && inv.expenses.length > 0;
   let rows = '';
   for (const l of inv.lines) {
-    rows += '<tr><td class="nw">' + fmtDate(l.serviceDate) + '</td><td>' + esc(l.clientName) + '</td>' +
+    rows += '<tr><td class="nw">' + fmtDate(l.serviceDate) + '</td><td>' + esc(l.clientName) +
+      (l.clientAddress ? '<div class="inv-client-addr">' + esc(l.clientAddress) + '</div>' : '') + '</td>' +
       '<td class="desc">' + esc(l.description) + '</td>' +
       '<td class="num">' + money(l.rate) + '/h</td>' +
       '<td class="num">' + l.qty + ' mins</td>' +
@@ -2190,16 +2230,19 @@ function subInvoiceHtml(inv) {
     (co.address ? esc(co.address) + '<br>' : '') +
     (co.phone ? 'Phone ' + esc(co.phone) + '<br>' : '') +
     (co.email ? esc(co.email) : '') +
-    '</div></div>' +
+    '</div>' + subClientBlock(inv) + '</div>' +
     '<table class="inv-items inv-items-physio inv-items-sub"><tr><th>DATE</th><th>CLIENT</th><th>SERVICE DESCRIPTION</th>' +
     '<th class="num">UNIT PRICE</th><th class="num">QTY</th><th class="num">TOTAL</th></tr>' +
-    rows + '</table>' +
+    rows + '</table>' + (hasExp ? subExpensesHtml(inv) : '') +
     '<table class="inv-totals">' +
-    '<tr><td class="t-lbl">SUBTOTAL</td><td class="t-val">' + money(inv.subtotal) + '</td></tr>' +
+    '<tr><td class="t-lbl">' + (hasExp ? 'SERVICES SUBTOTAL' : 'SUBTOTAL') + '</td><td class="t-val">' + money(inv.subtotal) + '</td></tr>' +
+    (hasExp ? '<tr><td class="t-lbl">EXPENSES</td><td class="t-val">' + money(inv.expensesTotal) + '</td></tr>' : '') +
     '<tr><td class="t-lbl">GST' + (inv.gstRate > 0 ? ' (' + inv.gstRate + '%)' : '') + '</td><td class="t-val">' + money(inv.gst) + '</td></tr>' +
     '<tr><td class="t-lbl">TOTAL DUE</td><td class="t-val"><b>' + money(inv.total) + '</b></td></tr>' +
     '</table>' +
-    (inv.gst > 0 ? '' : '<p class="inv-gst-note">No GST charged.</p>') +
+    (hasExp ? '<p class="inv-gst-note">' + (inv.gst > 0 ? 'GST applies to services only. ' : 'No GST charged (not registered for GST). ') +
+      'Expenses are billed at the actual amount paid, as shown on the receipt (GST-inclusive price, no GST added).</p>'
+      : (inv.gst > 0 ? '' : '<p class="inv-gst-note">No GST charged.</p>')) +
     '<div class="inv-pay"><h3>From</h3><table>' +
     '<tr><td>Name:</td><td>' + esc(p.name) + '</td></tr>' +
     '<tr><td>ABN:</td><td>' + esc(p.abn) + '</td></tr>' +
@@ -2211,7 +2254,43 @@ function subInvoiceHtml(inv) {
     '<tr><td>Account name:</td><td>' + esc(p.bankAccountName) + '</td></tr>' +
     '<tr><td>BSB:</td><td>' + esc(p.bankBsb) + '</td></tr>' +
     '<tr><td>Account number:</td><td>' + esc(p.bankAccountNumber) + '</td></tr>' +
-    '</table></div></div>';
+    '</table></div>' + (hasExp ? subReceiptPagesHtml(inv) : '') + '</div>';
+}
+
+// Client block next to BILL TO: only when at least one line has a client address (else output unchanged).
+function subClientBlock(inv) {
+  const seen = {}, items = [];
+  for (const l of inv.lines) {
+    if (!l.clientAddress) continue;
+    const k = l.clientName + '\n' + l.clientAddress;
+    if (seen[k]) continue; seen[k] = 1;
+    items.push('<b>' + esc(l.clientName) + '</b><br>' + esc(l.clientAddress));
+  }
+  return items.length ? '<div><b>CLIENT:</b><br>' + items.join('<br>') + '</div>' : '';
+}
+function subExpensesHtml(inv) {
+  let rows = '';
+  inv.expenses.forEach((e, i) => {
+    rows += '<tr><td class="nw">' + fmtDate(e.date) + '</td><td>' + esc(e.clientName) + '</td>' +
+      '<td class="desc">' + esc(e.description) + '<div class="inv-client-addr">Receipt E' + (i + 1) + (e.receiptRef ? ' – ' + esc(e.receiptRef) : '') +
+      (e.receipt ? ' (see receipt page)' : '') + '</div></td>' +
+      '<td class="num">' + money(e.amount) + '</td></tr>';
+  });
+  return '<h3 class="inv-exp-h">EXPENSES (reimbursable, at actual cost)</h3>' +
+    '<table class="inv-items inv-items-physio inv-items-sub inv-items-exp"><tr><th>DATE</th><th>CLIENT</th><th>DESCRIPTION / RECEIPT</th><th class="num">AMOUNT</th></tr>' +
+    rows + '</table>';
+}
+// Receipt photos are NOT in the ledger: only file name + SHA-256. The image lives in this browser's IndexedDB
+// and is filled into <img data-receipt-hash> after rendering (fillReceiptImages).
+function subReceiptPagesHtml(inv) {
+  let h = '';
+  inv.expenses.forEach((e, i) => {
+    if (!e.receipt) return;
+    h += '<div class="inv-receipt-page"><h2>Receipt E' + (i + 1) + ' – ' + esc(inv.number) + '</h2>' +
+      '<p>' + fmtDate(e.date) + ' · ' + esc(e.description) + (e.receiptRef ? ' · ' + esc(e.receiptRef) : '') + ' · ' + money(e.amount) + '</p>' +
+      '<img alt="receipt" data-receipt-hash="' + esc(e.receipt.sha256) + '" data-receipt-name="' + esc(e.receipt.fileName) + '"></div>';
+  });
+  return h;
 }
 
 function invoiceHtml(inv) {
@@ -2264,6 +2343,8 @@ function invoiceHtml(inv) {
 function showPreview(inv) {
   previewInvoice = inv;
   $('invoiceSheet').innerHTML = invoiceHtml(inv);
+  if (inv.expenses) fillReceiptImages($('invoiceSheet')).then(missing => { $('receiptRepickField').style.display = missing ? '' : 'none'; });
+  else $('receiptRepickField').style.display = 'none';
   $('previewCard').style.display = '';
   $('previewLabel').textContent = inv.number + ' — ' + inv.client.name;
   $('printHint').textContent = inv.invoiceType === 'subcontractor' ? '存 PDF 时建议文件名：' + pdfFilename(inv)
@@ -2271,8 +2352,9 @@ function showPreview(inv) {
   $('previewCard').scrollIntoView({ behavior: 'smooth' });
 }
 
-$('printBtn').addEventListener('click', () => {
+$('printBtn').addEventListener('click', async () => {
   if (!previewInvoice) return;
+  if (previewInvoice.expenses) await fillReceiptImages($('invoiceSheet'));
   const old = document.title;
   document.title = previewInvoice.invoiceType === 'subcontractor' ? pdfFilename(previewInvoice).replace(/\.pdf$/, '')
     : 'Invoice ' + previewInvoice.number + ' - ' + previewInvoice.client.name;
@@ -2440,6 +2522,7 @@ async function buildInvoicePdfBlob(inv) {
   const el = document.createElement('div');
   el.className = 'invoice-sheet';
   el.innerHTML = invoiceHtml(inv);
+  if (inv.expenses) await fillReceiptImages(el);
   el.style.position = 'fixed';
   el.style.left = '-10000px';
   el.style.top = '0';
@@ -2452,6 +2535,7 @@ async function buildInvoicePdfBlob(inv) {
       html2canvas: { scale: 2, useCORS: true },
       jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
     };
+    if (inv.expenses) opt.pagebreak = { mode: ['css'], before: '.inv-receipt-page' };
     return await html2pdf().set(opt).from(el).outputPdf('blob');
   } finally {
     el.remove();
@@ -2676,6 +2760,161 @@ $('setSaveBtn').addEventListener('click', () => {
   if (!isNaN(tm) && tm >= 0) st.paymentTermsDays = tm;
   saveState(); renderAll(); syncSupportHint(); toast('设置已保存');
 });
+
+/* ---------- expenses + receipts (Subcontractor Physio) ---------- */
+// Pending expense lines live only in this tab until "生成 Invoice"; then they are copied into the invoice object
+// (inv.expenses). No new top-level ledger key, so an older open tab cannot drop them (it keeps invoices as-is).
+let pendingExpenses = [];
+const RECEIPT_DB = 'ndis-invoice-receipts-v2';
+function receiptDb() {
+  return new Promise((resolve, reject) => {
+    const r = indexedDB.open(RECEIPT_DB, 1);
+    r.onupgradeneeded = () => r.result.createObjectStore('receipts');
+    r.onsuccess = () => resolve(r.result);
+    r.onerror = () => reject(r.error);
+  });
+}
+async function receiptPut(hash, rec) {
+  const db = await receiptDb();
+  await new Promise((res, rej) => { const tx = db.transaction('receipts', 'readwrite'); tx.objectStore('receipts').put(rec, hash); tx.oncomplete = res; tx.onerror = () => rej(tx.error); });
+  db.close();
+}
+async function receiptGet(hash) {
+  const db = await receiptDb();
+  const v = await new Promise((res, rej) => { const q = db.transaction('receipts').objectStore('receipts').get(hash); q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error); });
+  db.close();
+  return v || null;
+}
+async function sha256Hex(buf) {
+  if (window.crypto && crypto.subtle) {
+    const d = await crypto.subtle.digest('SHA-256', buf);
+    return Array.from(new Uint8Array(d)).map(b => b.toString(16).padStart(2, '0')).join('');
+  }
+  return sha256HexJs(new Uint8Array(buf)); // non-secure origins have no crypto.subtle
+}
+function sha256HexJs(m) {
+  const K = [0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3,
+    0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+    0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967, 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13,
+    0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+    0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3, 0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208,
+    0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2];
+  const H = [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19];
+  const len = m.length, total = Math.ceil((len + 9) / 64) * 64, b = new Uint8Array(total);
+  b.set(m); b[len] = 0x80;
+  const dv = new DataView(b.buffer);
+  dv.setUint32(total - 8, Math.floor(len / 0x20000000)); dv.setUint32(total - 4, (len * 8) >>> 0);
+  const w = new Uint32Array(64), ror = (x, n) => (x >>> n) | (x << (32 - n));
+  for (let o = 0; o < total; o += 64) {
+    for (let i = 0; i < 16; i++) w[i] = dv.getUint32(o + i * 4);
+    for (let i = 16; i < 64; i++) {
+      const s0 = ror(w[i - 15], 7) ^ ror(w[i - 15], 18) ^ (w[i - 15] >>> 3), s1 = ror(w[i - 2], 17) ^ ror(w[i - 2], 19) ^ (w[i - 2] >>> 10);
+      w[i] = (w[i - 16] + s0 + w[i - 7] + s1) >>> 0;
+    }
+    let [a, bb, c, d, e, f, g, h] = H;
+    for (let i = 0; i < 64; i++) {
+      const t1 = (h + (ror(e, 6) ^ ror(e, 11) ^ ror(e, 25)) + ((e & f) ^ (~e & g)) + K[i] + w[i]) >>> 0;
+      const t2 = ((ror(a, 2) ^ ror(a, 13) ^ ror(a, 22)) + ((a & bb) ^ (a & c) ^ (bb & c))) >>> 0;
+      h = g; g = f; f = e; e = (d + t1) >>> 0; d = c; c = bb; bb = a; a = (t1 + t2) >>> 0;
+    }
+    [a, bb, c, d, e, f, g, h].forEach((v, i) => { H[i] = (H[i] + v) >>> 0; });
+  }
+  return H.map(x => x.toString(16).padStart(8, '0')).join('');
+}
+// Store a receipt photo locally (IndexedDB), shrunk to max 1600 px JPEG. Returns { fileName, sha256 } of the ORIGINAL file.
+async function storeReceiptFile(file) {
+  if (!file || !/^image\//.test(file.type)) throw new Error('收据要是照片（jpg / png）。');
+  const buf = await file.arrayBuffer();
+  const hash = await sha256Hex(buf);
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = () => rej(new Error('照片读不到')); i.src = url; });
+    const k = Math.min(1, 1600 / Math.max(img.naturalWidth, img.naturalHeight));
+    const c = document.createElement('canvas');
+    c.width = Math.round(img.naturalWidth * k); c.height = Math.round(img.naturalHeight * k);
+    c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+    await receiptPut(hash, { fileName: file.name, dataUrl: c.toDataURL('image/jpeg', 0.85), savedAt: new Date().toISOString() });
+  } finally { URL.revokeObjectURL(url); }
+  return { fileName: file.name, sha256: hash };
+}
+// Fill receipt <img> tags from IndexedDB. Returns the number of receipts not found in this browser.
+async function fillReceiptImages(root) {
+  let missing = 0;
+  for (const img of Array.from(root.querySelectorAll('img[data-receipt-hash]'))) {
+    let rec = null;
+    try { rec = await receiptGet(img.dataset.receiptHash); } catch (e) { rec = null; }
+    if (rec && rec.dataUrl) {
+      if (img.src !== rec.dataUrl) { img.src = rec.dataUrl; await img.decode().catch(() => {}); }
+    } else {
+      missing++;
+      const box = document.createElement('div');
+      box.className = 'inv-receipt-missing';
+      box.textContent = '收据照片不在这个浏览器里 / Receipt image not stored in this browser: ' + img.dataset.receiptName +
+        '（用「重新附上收据照片」选回同一张照片）';
+      box.dataset.receiptHash = img.dataset.receiptHash;
+      img.replaceWith(box);
+    }
+  }
+  return missing;
+}
+function renderPendingExpenses() {
+  const box = $('expList');
+  if (!pendingExpenses.length) { box.innerHTML = '<p class="muted">还没有杂费（可以不加）。</p>'; return; }
+  box.innerHTML = '<table class="list"><tr><th>日期</th><th>客人</th><th>描述</th><th>收据</th><th>金额</th><th></th></tr>' +
+    pendingExpenses.map((e, i) => '<tr><td>' + fmtDate(e.date) + '</td><td>' + esc(e.clientName) + '</td><td>' + esc(e.description) + '</td>' +
+      '<td>' + esc(e.receiptRef || '') + (e.receipt ? '<div class="muted">📎 ' + esc(e.receipt.fileName) + '</div>' : '<div class="muted">没有照片</div>') + '</td>' +
+      '<td class="total-cell">' + money(e.amount) + '</td><td><button class="danger" type="button" data-expdel="' + i + '">删除</button></td></tr>').join('') +
+    '</table><div class="hint">杂费合计 ' + money(pendingExpenses.reduce((a, e) => a + e.amount, 0)) +
+    '。生成 invoice 时：分开模式下放进同一客人的 invoice；合并模式全部放进那一张。这些杂费不影响 same-day / 重叠检查。</div>';
+}
+// Returns a function group -> expenses for that group, or null (blocked).
+function assignExpenses(sessions, exps, combined) {
+  if (!exps.length) return () => [];
+  if (combined) return () => exps.slice();
+  const names = new Set(sessions.map(s => (s.clientName || '').trim().toLowerCase()));
+  const orphan = exps.filter(e => !names.has(e.clientName.trim().toLowerCase()));
+  if (orphan.length) {
+    alert('不能生成 invoice：这些杂费的客人没有勾选的 session：\n' + orphan.map(e => e.clientName + ' ' + money(e.amount)).join('\n') +
+      '\n请改客人名字，或勾「合并成一张」。');
+    return null;
+  }
+  return g => { const k = (g[0].clientName || '').trim().toLowerCase(); return exps.filter(e => e.clientName.trim().toLowerCase() === k); };
+}
+$('expAddBtn').addEventListener('click', async () => {
+  const date = $('expDate').value, clientName = $('expClient').value.trim(), description = $('expDesc').value.trim();
+  const receiptRef = $('expRef').value.trim(), amount = round2(Number($('expAmount').value));
+  if (!date) { alert('杂费日期要填。'); return; }
+  if (!clientName) { alert('杂费的客人名字要填。'); return; }
+  if (!description) { alert('杂费描述要填。'); return; }
+  if (!(amount > 0)) { alert('杂费金额不对。'); return; }
+  const file = $('expFile').files && $('expFile').files[0];
+  let receipt = null;
+  if (file) {
+    try { receipt = await storeReceiptFile(file); } catch (e) { alert('收据照片存不了：' + (e && e.message ? e.message : e)); return; }
+  } else if (!confirm('这条杂费没有收据照片，仍然加？')) return;
+  const e = { id: uid(), date: date, clientName: clientName, description: description, receiptRef: receiptRef, amount: amount };
+  if (receipt) e.receipt = receipt;
+  pendingExpenses.push(e);
+  ['expDesc', 'expRef', 'expAmount'].forEach(id => { $(id).value = ''; }); $('expFile').value = '';
+  renderPendingExpenses();
+});
+$('expList').addEventListener('click', e => {
+  const i = e.target.dataset.expdel;
+  if (i == null) return;
+  pendingExpenses.splice(Number(i), 1); renderPendingExpenses();
+});
+$('receiptRepick').addEventListener('change', async () => {
+  const f = $('receiptRepick').files && $('receiptRepick').files[0];
+  $('receiptRepick').value = '';
+  if (!f || !previewInvoice) return;
+  const want = (previewInvoice.expenses || []).filter(e => e.receipt).map(e => e.receipt.sha256);
+  let hash;
+  try { hash = await sha256Hex(await f.arrayBuffer()); } catch (e) { alert('照片读不到'); return; }
+  if (!want.includes(hash)) { alert('这张照片和这张 invoice 记录的收据不一样（SHA-256 不符）。'); return; }
+  await storeReceiptFile(f);
+  showPreview(previewInvoice); toast('收据已重新附上');
+});
+renderPendingExpenses();
 
 /* ---------- companies (Subcontractor Physio) ---------- */
 let editingCompanyId = null;

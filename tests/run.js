@@ -754,6 +754,218 @@ async function printPdf(page, file) {
     await ctx.close();
   }
 
+  /* ---------- 9. Regression: no expenses / no client address -> byte-identical to the previous release ---------- */
+  {
+    const BASE_REF = 'ede6f21';
+    let BASE_HTML = null;
+    try { BASE_HTML = execFileSync('git', ['show', BASE_REF + ':index.html'], { cwd: ROOT, encoding: 'utf8' }); } catch (e) { BASE_HTML = null; }
+    check('regress: baseline ' + BASE_REF + ' available', !!BASE_HTML);
+    const runAll = async html => {
+      const { ctx, page, dialogs } = await openApp(html, { seed: { 'ndis-invoice-tool-v2': ledgerText } });
+      const r = await page.evaluate(() => {
+        let seed = 42; Math.random = () => { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; };
+        let t = 1763600000000; Date.now = () => (t += 1000);
+        window.alert = () => {}; window.confirm = () => true;
+        state.companies.push({ id: 'coX', name: 'EXAMPLE Health Pty Ltd', abn: '00 000 000 000', address: '1 Example Rd, Melbourne VIC 3000',
+          phone: '0400 000 000', email: 'admin@example.com', rate: 115, dueDays: 7, gstRate: 0, title: 'INVOICE' });
+        const cid = state.clients[0].id;
+        state.sessions.push({ id: 'phX', invoiceId: null, clientId: cid, kind: 'physio', claimType: 'direct', date: '2026-11-20', startTime: '10:00', endTime: '11:00',
+          physioDescription: 'Follow-up session', travelOutMin: 20, travelReturnMin: 20, km: 10, parkingTolls: 4.5, parkingTollsNote: 'EXAMPLE car park',
+          isPublicHoliday: false, isNonFaceToFace: false });
+        state.sessions.push({ id: 'sbX1', invoiceId: null, clientId: '', kind: 'subcontractor', companyId: 'coX', clientName: 'EXAMPLE Client A', date: '2026-11-21',
+          startTime: '09:00', endTime: '10:15', minutes: 75, description: 'Physiotherapy session (60 mins) + note writing (15 mins) - Home Visit', km: 0, isPublicHoliday: false, isNonFaceToFace: false });
+        state.sessions.push({ id: 'sbX2', invoiceId: null, clientId: '', kind: 'subcontractor', companyId: 'coX', clientName: 'EXAMPLE Client B', date: '2026-11-21',
+          startTime: '11:00', endTime: '12:15', minutes: 75, description: 'Physiotherapy session (Hydrotherapy) (60 mins) + note writing (15 mins)', km: 0, isPublicHoliday: false, isNonFaceToFace: false });
+        saveState(); renderAll();
+        const out = { html: [], sheets: [] };
+        const gen = (kind, ids, date, due, extra) => {
+          $('invKind').value = kind; $('invKind').dispatchEvent(new Event('change'));
+          if (kind === 'subcontractor') { $('invCompany').value = 'coX'; $('invCompany').dispatchEvent(new Event('change')); }
+          else { $('invClient').value = cid; renderInvoicePick(); }
+          $('invDate').value = date; $('invDue').value = due;
+          if (kind === 'physio') $('invPayments').value = '';
+          if (extra) extra();
+          if (ids) document.querySelectorAll('.pickSess').forEach(x => { x.checked = ids.includes(x.value); });
+          $('invGenBtn').click();
+          out.sheets.push($('invoiceSheet').innerHTML);
+        };
+        gen('support', null, '2026-11-16', '2026-11-30');
+        gen('physio', ['phX'], '2026-11-20', '2026-12-04');
+        gen('subcontractor', ['sbX1', 'sbX2'], '2026-11-21', '2026-11-28');
+        gen('subcontractor', null, '2026-11-21', '2026-11-28', () => {
+          state.sessions.push({ id: 'sbX3', invoiceId: null, clientId: '', kind: 'subcontractor', companyId: 'coX', clientName: 'EXAMPLE Client C', date: '2026-11-22',
+            startTime: '09:00', endTime: '10:15', minutes: 75, description: 'Physiotherapy session (60 mins) + note writing (15 mins) - Home Visit', km: 0 });
+          renderInvoicePick(); $('invCombine').checked = true; $('invTitle').value = 'TAX INVOICE';
+        });
+        out.html = state.invoices.map(i => invoiceHtml(i));
+        out.types = state.invoices.map(i => i.invoiceType || 'support');
+        out.ledger = localStorage.getItem(STORAGE_KEY);
+        return out;
+      });
+      await ctx.close();
+      return { r, errs: dialogs.filter(d => d.startsWith('pageerror')) };
+    };
+    if (BASE_HTML) {
+      const A = await runAll(BASE_HTML), B = await runAll(V2_HTML);
+      check('regress: both runs error-free', !A.errs.length && !B.errs.length, [A.errs, B.errs]);
+      check('regress: generated all three types', ['support', 'physio', 'subcontractor'].every(t => B.r.types.includes(t)), B.r.types);
+      for (const t of ['support', 'physio', 'subcontractor']) {
+        const ia = A.r.types.map((x, i) => x === t ? i : -1).filter(i => i >= 0);
+        check('regress: ' + t + ' invoice HTML byte-identical (no expenses)', ia.length > 0 && ia.every(i => A.r.html[i] === B.r.html[i]), ia);
+      }
+      check('regress: preview sheets byte-identical (support, physio, sub separate, sub combined)', JSON.stringify(A.r.sheets) === JSON.stringify(B.r.sheets));
+      check('regress: saved ledger byte-identical (no new keys when unused)', A.r.ledger === B.r.ledger);
+    }
+  }
+
+  /* ---------- 10. Subcontractor Physio: expenses + receipts + client address ---------- */
+  {
+    const { ctx, page, dialogs, requests } = await openApp(V2_HTML, { seed: { 'ndis-invoice-tool-v2': ledgerText } });
+    const r = await page.evaluate(async () => {
+      const out = {}; const dlg = []; window.alert = m => dlg.push(String(m)); window.confirm = () => true;
+      state.companies.push({ id: 'coE', name: 'EXAMPLE Care Pty Ltd', abn: '00 000 000 000', address: '', phone: '', email: '',
+        rate: 115, dueDays: 14, gstRate: 0, title: 'INVOICE' });
+      saveState(); renderAll();
+      // EXAMPLE receipt image made on the fly (no real receipt in the repo)
+      const c = document.createElement('canvas'); c.width = 300; c.height = 500;
+      const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, 300, 500); g.fillStyle = '#000'; g.font = '20px Arial';
+      g.fillText('EXAMPLE RECEIPT', 40, 60); g.fillText('Total $15.80', 60, 120);
+      const blob = await new Promise(res => c.toBlob(res, 'image/png'));
+      const file = new File([blob], 'example-receipt.png', { type: 'image/png' });
+      const bytes = new Uint8Array(await blob.arrayBuffer());
+      out.fileB64 = btoa(String.fromCharCode.apply(null, bytes));
+      const addSub = (client, addr, date, start) => {
+        clearSessionForm();
+        $('sessKind').value = 'subcontractor'; $('sessKind').dispatchEvent(new Event('change'));
+        $('sessCompany').value = 'coE'; $('sessSubClient').value = client; $('sessSubAddr').value = addr;
+        $('sessDate').value = date; $('sessDate').dispatchEvent(new Event('change')); $('sessStart').value = start;
+        const n = state.sessions.length; $('sessSaveBtn').click();
+        return state.sessions.length === n + 1 ? state.sessions[n] : null;
+      };
+      const sa = addSub('EXAMPLE Client A', '1 Example Street, Exampleville VIC 3000', '2026-11-20', '09:00');
+      const sb = addSub('EXAMPLE Client B', '', '2026-11-20', '11:00');
+      out.addrSaved = sa && sa.clientAddress === '1 Example Street, Exampleville VIC 3000' && sb && !('clientAddress' in sb);
+      out.companyBlankOk = !!sa && !!sb;
+      const sessBefore = JSON.stringify(state.sessions);
+      const sdBefore = sameDayConflicts(state.clients[0].id, '2026-11-20', 'support', null).length;
+      // invoice tab
+      $('invKind').value = 'subcontractor'; $('invKind').dispatchEvent(new Event('change'));
+      $('invCompany').value = 'coE'; $('invCompany').dispatchEvent(new Event('change'));
+      $('invDate').value = '2026-11-20'; $('invDate').dispatchEvent(new Event('change'));
+      out.expBoxShown = $('invExpBox').style.display === '' ;
+      out.due14 = $('invDue').value === '2026-12-04';
+      out.title = $('invTitle').value;
+      const addExp = async (client, f) => {
+        $('expDate').value = '2026-11-20'; $('expClient').value = client; $('expDesc').value = 'EXAMPLE pool entry';
+        $('expRef').value = 'No. 00001'; $('expAmount').value = '15.80';
+        if (f) { const dt = new DataTransfer(); dt.items.add(f); $('expFile').files = dt.files; }
+        $('expAddBtn').click();
+        for (let i = 0; i < 50 && $('expDesc').value; i++) await new Promise(r => setTimeout(r, 50));
+        await new Promise(r => setTimeout(r, 100));
+      };
+      await addExp('EXAMPLE Client A', file);
+      out.pending = pendingExpenses.map(e => [e.clientName, e.amount, e.receipt && e.receipt.fileName, e.receipt && e.receipt.sha256]);
+      out.noSessionChange = JSON.stringify(state.sessions) === sessBefore &&
+        sameDayConflicts(state.clients[0].id, '2026-11-20', 'support', null).length === sdBefore;
+      // separate mode: expense for a client with no ticked session -> blocked
+      await addExp('EXAMPLE Nobody', null);
+      document.querySelectorAll('.pickSess').forEach(x => { x.checked = true; });
+      let n = state.invoices.length; const d0 = dlg.length; $('invGenBtn').click();
+      out.orphanBlocked = state.invoices.length === n && dlg.slice(d0).some(m => /没有勾选的 session/.test(m));
+      pendingExpenses.pop(); renderPendingExpenses();
+      // separate: A gets the expense, B not
+      n = state.invoices.length; $('invGenBtn').click();
+      const made = state.invoices.slice(n);
+      const ia = made.find(i => i.client.name === 'EXAMPLE Client A'), ib = made.find(i => i.client.name === 'EXAMPLE Client B');
+      if (!ia || !ib) { out.dlg = dlg; out.made = made.map(i => i.client.name); out.pend = pendingExpenses; out.picks = Array.from(document.querySelectorAll('.pickSess')).map(x => x.value + x.checked); return out; }
+      out.sepA = ia && [ia.subtotal, ia.expensesTotal, ia.gst, ia.total, ia.title, ia.expenses.length, Object.keys(ia.expenses[0].receipt).sort().join()];
+      out.sepB = ib && [ib.total, 'expenses' in ib, 'expensesTotal' in ib];
+      out.pendingCleared = pendingExpenses.length === 0;
+      showPreview(ia); await new Promise(r => setTimeout(r, 400));
+      out.sheetText = $('invoiceSheet').innerText;
+      out.imgFilled = !!document.querySelector('#invoiceSheet .inv-receipt-page img') && document.querySelector('#invoiceSheet .inv-receipt-page img').src.startsWith('data:image/jpeg');
+      out.addrInLine = /EXAMPLE Client A\s*1 Example Street, Exampleville VIC 3000/.test(out.sheetText);
+      out.clientBlock = /CLIENT:\s*EXAMPLE Client A\s*1 Example Street/.test(out.sheetText);
+      out.providerAddr = out.sheetText.includes('Address:') && out.sheetText.includes(state.settings.address);
+      showPreview(ib); out.sheetB = $('invoiceSheet').innerText;
+      out.ledgerNoImage = !/data:image/.test(localStorage.getItem(STORAGE_KEY));
+      out.ledgerHasExpense = /"expenses":\[/.test(localStorage.getItem(STORAGE_KEY));
+      out.fileName = pdfFilename(ia);
+      out.iaId = ia.id;
+      // receipt lost from this browser -> warning + re-attach by the same photo only
+      await new Promise(r => { const q = indexedDB.deleteDatabase('ndis-invoice-receipts-v2'); q.onsuccess = q.onerror = q.onblocked = r; });
+      showPreview(ia); await new Promise(r => setTimeout(r, 300));
+      out.missingShown = !!document.querySelector('#invoiceSheet .inv-receipt-missing') && $('receiptRepickField').style.display === '';
+      const wrong = new File([new Uint8Array([1, 2, 3])], 'x.png', { type: 'image/png' });
+      let dt = new DataTransfer(); dt.items.add(wrong); $('receiptRepick').files = dt.files; $('receiptRepick').dispatchEvent(new Event('change'));
+      await new Promise(r => setTimeout(r, 300));
+      out.wrongRejected = dlg.some(m => /SHA-256 不符/.test(m));
+      dt = new DataTransfer(); dt.items.add(file); $('receiptRepick').files = dt.files; $('receiptRepick').dispatchEvent(new Event('change'));
+      await new Promise(r => setTimeout(r, 600));
+      out.restored = !document.querySelector('#invoiceSheet .inv-receipt-missing') && document.querySelector('#invoiceSheet .inv-receipt-page img').src.startsWith('data:image/jpeg');
+      // combined mode: all expenses on the single invoice
+      addSub('EXAMPLE Client C', '', '2026-11-22', '09:00'); addSub('EXAMPLE Client D', '', '2026-11-22', '11:00');
+      $('invKind').value = 'subcontractor'; $('invKind').dispatchEvent(new Event('change'));
+      $('invCompany').value = 'coE'; $('invCompany').dispatchEvent(new Event('change'));
+      await addExp('EXAMPLE Client C', null); await addExp('EXAMPLE Client D', null);
+      $('invCombine').checked = true;
+      n = state.invoices.length; $('invGenBtn').click();
+      const cm = state.invoices.slice(n);
+      out.comb = cm.map(i => [i.subtotal, i.expensesTotal, i.total, i.expenses.length, i.expenses.every(e => !e.receipt)]);
+      showPreview(cm[0]); out.combReceiptPages = document.querySelectorAll('#invoiceSheet .inv-receipt-page').length;
+      out.vec = ['', 'abc', 'a'.repeat(1000), '张'.repeat(40)].map(t => sha256HexJs(new TextEncoder().encode(t)));
+      out.ledger = localStorage.getItem(STORAGE_KEY);
+      out.dlg = dlg;
+      return out;
+    });
+    const nodeHash = require('crypto').createHash('sha256').update(Buffer.from(r.fileB64, 'base64')).digest('hex');
+    const H = t => require('crypto').createHash('sha256').update(t, 'utf8').digest('hex');
+    check('exp: built-in SHA-256 fallback matches Node (4 vectors)', JSON.stringify(r.vec) === JSON.stringify(['', 'abc', 'a'.repeat(1000), '张'.repeat(40)].map(H)), r.vec);
+    check('exp: client address saved only when filled', r.addrSaved, r);
+    check('exp: company with empty address/email still usable', r.companyBlankOk);
+    check('exp: expenses box shown for Subcontractor; due = date + 14; title INVOICE', r.expBoxShown && r.due14 && r.title === 'INVOICE', [r.expBoxShown, r.due14, r.title]);
+    check('exp: receipt stored as file name + SHA-256 of the original file', r.pending.length === 1 && r.pending[0][2] === 'example-receipt.png' && r.pending[0][3] === nodeHash, [r.pending, nodeHash]);
+    check('exp: adding expenses changes no session and no same-day result', r.noSessionChange);
+    check('exp: separate mode blocks an expense whose client has no ticked session', r.orphanBlocked, r.dlg);
+    check('exp: separate mode puts expense on that client\'s invoice: 143.75 + 15.80, GST 0 = 159.55',
+      JSON.stringify(r.sepA) === JSON.stringify([143.75, 15.8, 0, 159.55, 'INVOICE', 1, 'fileName,sha256']), r.sepA);
+    check('exp: other client invoice has no expense keys at all', JSON.stringify(r.sepB) === JSON.stringify([143.75, false, false]), r.sepB);
+    check('exp: pending expenses cleared after generating', r.pendingCleared);
+    for (const h of ['EXPENSES (reimbursable, at actual cost)', 'EXAMPLE pool entry', 'Receipt E1 – No. 00001', 'SERVICES SUBTOTAL', '$15.80', 'TOTAL DUE', '$159.55',
+                     'No GST charged (not registered for GST)', 'Receipt E1 – ' ])
+      check('exp: sheet shows "' + h + '"', r.sheetText.includes(h), r.sheetText.slice(0, 900));
+    check('exp: GST shown as $0.00', /GST\s*\$0\.00/.test(r.sheetText));
+    check('exp: receipt page image filled from local IndexedDB', r.imgFilled);
+    check('exp: client address printed in the line and in a CLIENT block', r.addrInLine && r.clientBlock, r.sheetText.slice(0, 700));
+    check('exp: provider address from settings printed', r.providerAddr);
+    check('exp: invoice without address/expenses has no CLIENT block / EXPENSES', !/CLIENT:\s/.test(r.sheetB) && !/EXPENSES/.test(r.sheetB) && /No GST charged\./.test(r.sheetB));
+    check('exp: ledger keeps expenses but never the image', r.ledgerHasExpense && r.ledgerNoImage);
+    check('exp: missing receipt shows warning + re-attach button', r.missingShown);
+    check('exp: re-attach refuses a different photo (hash check)', r.wrongRejected, r.dlg);
+    check('exp: re-attach with the same photo restores the page', r.restored);
+    check('exp: combine mode puts all expenses on the one invoice', JSON.stringify(r.comb) === JSON.stringify([[287.5, 31.6, 319.1, 2, true]]) && r.combReceiptPages === 0, [r.comb, r.combReceiptPages]);
+    check('exp: no page errors', !dialogs.some(d => d.startsWith('pageerror')), dialogs.filter(d => d.startsWith('pageerror')));
+    check('exp: no network requests besides the app', !requests.some(u => !u.includes('ndis-tool.test') && !u.includes('8766')), requests);
+    // print: invoice page + receipt page
+    {
+      const pg = await (async () => { await page.evaluate(id => { showPreview(state.invoices.find(i => i.id === id)); activateTab('invoice'); }, r.iaId); await new Promise(r => setTimeout(r, 400)); return page; })();
+      const f = path.join(OUT, 'exp-print.pdf'); await printPdf(pg, f);
+      const pages = (fs.readFileSync(f, 'latin1').match(/\/Type\s*\/Page[^s]/g) || []).length;
+      check('exp: printed PDF = invoice page + receipt page (2 pages)', pages === 2, pages);
+    }
+    await ctx.close();
+    // stale tab: the previous release (no expenses code) must keep inv.expenses when it saves
+    let BASE_HTML = null;
+    try { BASE_HTML = execFileSync('git', ['show', 'ede6f21:index.html'], { cwd: ROOT, encoding: 'utf8' }); } catch (e) { BASE_HTML = null; }
+    if (BASE_HTML) {
+      const old = await openApp(BASE_HTML, { seed: { 'ndis-invoice-tool-v2': r.ledger } });
+      const kept = await old.page.evaluate(() => { saveState(); const d = JSON.parse(localStorage.getItem(STORAGE_KEY));
+        return d.invoices.filter(i => i.expenses).map(i => [i.expenses.length, i.expensesTotal, i.total]); });
+      check('exp: an old open tab (ede6f21) keeps expenses when it saves', JSON.stringify(kept) === JSON.stringify([[1, 15.8, 159.55], [2, 31.6, 319.1]]), kept);
+      await old.ctx.close();
+    }
+  }
+
   /* ---------- 7. CLI tools/check_same_day.py (read-only) ---------- */
   {
     const tmp = fs.mkdtempSync(path.join(require('os').tmpdir(), 'sdcli-'));
